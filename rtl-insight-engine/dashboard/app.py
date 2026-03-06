@@ -978,48 +978,407 @@ def render_dependency_graph(graph, rtl):
                 unsafe_allow_html=True)
     G = graph.graph
     if not G.nodes:
-        st.info("No dependency data."); return
+        st.info("No dependency data available for this module."); return
 
-    pos = nx.spring_layout(G, seed=42, k=2.2)
-    ex, ey = [], []
-    for u, v in G.edges():
-        x0,y0 = pos[u]; x1,y1 = pos[v]
-        ex += [x0,x1,None]; ey += [y0,y1,None]
+    # ── Pre-compute node metrics ──────────────────────────────────────────────
+    nodes = list(G.nodes)
+    centrality = nx.betweenness_centrality(G) if len(nodes) >= 3 else {n: 0.0 for n in nodes}
+    # Normalise centrality to [0,1]
+    max_c = max(centrality.values()) or 1.0
+    cent_norm = {n: v / max_c for n, v in centrality.items()}
 
-    def nc(n):
-        s = rtl.signals.get(n)
-        if not s:                  return "#475569"
-        if "output" in s.signal_type: return "#ef4444"
-        if "input"  in s.signal_type: return "#22c55e"
+    fanout = {n: G.out_degree(n) for n in nodes}
+    fanin  = {n: G.in_degree(n)  for n in nodes}
+
+    # ── Controls ──────────────────────────────────────────────────────────────
+    c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+    with c1:
+        layout_choice = st.selectbox(
+            "Layout",
+            ["Spring (force-directed)", "Kamada-Kawai", "Hierarchical (dot)", "Circular", "Shell"],
+            key="dg_layout",
+        )
+    with c2:
+        color_by = st.selectbox(
+            "Color nodes by",
+            ["Signal type", "Centrality", "Fan-out", "Fan-in"],
+            key="dg_color",
+        )
+    with c3:
+        highlight_sig = st.selectbox(
+            "Highlight signal path",
+            ["None"] + sorted(nodes),
+            key="dg_hl",
+        )
+    with c4:
+        show_labels = st.toggle("Show labels", value=True, key="dg_lbl")
+
+    # ── Compute layout positions ──────────────────────────────────────────────
+    try:
+        if layout_choice.startswith("Spring"):
+            k_val = 3.5 / (len(nodes) ** 0.5) if len(nodes) > 4 else 2.2
+            pos = nx.spring_layout(G, seed=42, k=k_val, iterations=80)
+        elif layout_choice.startswith("Kamada"):
+            pos = nx.kamada_kawai_layout(G)
+        elif layout_choice.startswith("Hierarchical"):
+            try:
+                pos = nx.nx_agraph.graphviz_layout(G, prog="dot")
+                # Normalize to [-1,1]
+                xs = [v[0] for v in pos.values()]; ys = [v[1] for v in pos.values()]
+                rx = max(xs)-min(xs) or 1; ry = max(ys)-min(ys) or 1
+                pos = {n: ((x-min(xs))/rx*2-1, (y-min(ys))/ry*2-1) for n,(x,y) in pos.items()}
+            except Exception:
+                pos = nx.spring_layout(G, seed=42, k=2.2)
+        elif layout_choice.startswith("Circular"):
+            pos = nx.circular_layout(G)
+        else:
+            pos = nx.shell_layout(G)
+    except Exception:
+        pos = nx.spring_layout(G, seed=42)
+
+    # ── Determine highlighted path nodes/edges ────────────────────────────────
+    hl_nodes: set = set()
+    hl_edges: set = set()
+    if highlight_sig != "None" and highlight_sig in G:
+        hl_nodes.add(highlight_sig)
+        # upstream (ancestors) + downstream (descendants)
+        try:
+            hl_nodes |= nx.ancestors(G, highlight_sig)
+            hl_nodes |= nx.descendants(G, highlight_sig)
+        except Exception:
+            pass
+        for u, v in G.edges():
+            if u in hl_nodes and v in hl_nodes:
+                hl_edges.add((u, v))
+
+    # ── Color palette ─────────────────────────────────────────────────────────
+    TYPE_COLORS = {
+        "input":        "#22c55e",
+        "output":       "#ef4444",
+        "inout":        "#f97316",
+        "wire":         "#3b82f6",
+        "reg":          "#a855f7",
+        "logic":        "#8b5cf6",
+        "unknown":      "#475569",
+    }
+
+    def _type_color(n):
+        sig = rtl.signals.get(n)
+        if sig:
+            for key, col in TYPE_COLORS.items():
+                if key in sig.signal_type:
+                    return col
+        return "#475569"
+
+    def _centrality_color(n):
+        v = cent_norm.get(n, 0)
+        if v >= 0.75: return "#ef4444"
+        if v >= 0.50: return "#f97316"
+        if v >= 0.25: return "#eab308"
         return "#3b82f6"
 
-    fig = go.Figure(data=[
-        go.Scatter(x=ex, y=ey, mode="lines",
-                   line=dict(width=1, color="#1e3a5f"), hoverinfo="none"),
-        go.Scatter(
-            x=[pos[n][0] for n in G.nodes], y=[pos[n][1] for n in G.nodes],
-            mode="markers+text", text=list(G.nodes), textposition="top center",
-            textfont=dict(size=10, color="#94a3b8"),
-            marker=dict(size=18, color=[nc(n) for n in G.nodes],
-                        line=dict(width=1.5, color="#0d1424")),
-        ),
-    ], layout=go.Layout(
-        title=dict(text="🟢 Input &nbsp; 🔴 Output &nbsp; 🔵 Internal",
-                   font=dict(size=11,color="#64748b"), x=0),
-        showlegend=False,
-        paper_bgcolor=CHART_BG, plot_bgcolor="#0a0f1e",
-        font=dict(color=FONT_COLOR),
-        xaxis=dict(showgrid=False,zeroline=False,showticklabels=False),
-        yaxis=dict(showgrid=False,zeroline=False,showticklabels=False),
-        margin=dict(l=16,r=16,t=40,b=16), height=460,
-    ))
-    st.plotly_chart(fig, use_container_width=True)
+    def _fanout_color(n):
+        fo = fanout.get(n, 0)
+        if fo >= 6: return "#ef4444"
+        if fo >= 3: return "#f97316"
+        if fo >= 1: return "#3b82f6"
+        return "#475569"
 
-    crit = graph.get_critical_nodes()[:10]
-    if crit:
-        cdf = pd.DataFrame(crit, columns=["Signal","Centrality"])
-        st.dataframe(cdf.style.bar(subset=["Centrality"], color="#3b82f6"),
-                     use_container_width=True, height=220)
+    def _fanin_color(n):
+        fi = fanin.get(n, 0)
+        if fi >= 6: return "#a855f7"
+        if fi >= 3: return "#8b5cf6"
+        if fi >= 1: return "#3b82f6"
+        return "#475569"
+
+    color_fn = {
+        "Signal type":  _type_color,
+        "Centrality":   _centrality_color,
+        "Fan-out":      _fanout_color,
+        "Fan-in":       _fanin_color,
+    }[color_by]
+
+    # ── Build Plotly figure ───────────────────────────────────────────────────
+    # --- Edge traces (dimmed + highlighted) ----------------------------------
+    ex_dim, ey_dim = [], []
+    ex_hl,  ey_hl  = [], []
+
+    for u, v in G.edges():
+        x0, y0 = pos[u]; x1, y1 = pos[v]
+        bucket_x = ex_hl if (u, v) in hl_edges else ex_dim
+        bucket_y = ey_hl if (u, v) in hl_edges else ey_dim
+        bucket_x += [x0, x1, None]
+        bucket_y += [y0, y1, None]
+
+    traces = []
+    if ex_dim:
+        traces.append(go.Scatter(
+            x=ex_dim, y=ey_dim, mode="lines",
+            line=dict(width=0.8, color="#1e3a5f"),
+            hoverinfo="none", showlegend=False,
+        ))
+    if ex_hl:
+        traces.append(go.Scatter(
+            x=ex_hl, y=ey_hl, mode="lines",
+            line=dict(width=2.5, color="#f59e0b"),
+            hoverinfo="none", showlegend=False,
+        ))
+
+    # --- Arrowhead annotations -----------------------------------------------
+    annotations = []
+    for u, v in G.edges():
+        x0, y0 = pos[u]; x1, y1 = pos[v]
+        is_hl_edge = (u, v) in hl_edges
+        annotations.append(dict(
+            ax=x0, ay=y0, x=x1, y=y1,
+            xref="x", yref="y", axref="x", ayref="y",
+            showarrow=True,
+            arrowhead=3, arrowsize=1.0,
+            arrowwidth=1.5 if is_hl_edge else 0.8,
+            arrowcolor="#f59e0b" if is_hl_edge else "#1e3a5f",
+            standoff=10,
+        ))
+
+    # --- Node trace -----------------------------------------------------------
+    node_x = [pos[n][0] for n in nodes]
+    node_y = [pos[n][1] for n in nodes]
+
+    node_colors, node_sizes, node_borders, border_widths = [], [], [], []
+    hover_texts = []
+
+    for n in nodes:
+        sig = rtl.signals.get(n)
+        c   = cent_norm.get(n, 0)
+        fo  = fanout.get(n, 0)
+        fi  = fanin.get(n, 0)
+
+        base_color = color_fn(n)
+        is_hl = n in hl_nodes and highlight_sig != "None"
+        is_focus = n == highlight_sig
+
+        node_colors.append(base_color)
+        # Size: base 14 + centrality boost + highlight boost
+        size = 14 + c * 20 + (8 if is_focus else (4 if is_hl else 0))
+        node_sizes.append(size)
+        node_borders.append("#f59e0b" if is_focus else
+                            ("#fbbf24" if is_hl else "#0d1424"))
+        border_widths.append(3 if is_focus else (2 if is_hl else 1.2))
+
+        # Hover tooltip
+        stype = sig.signal_type if sig else "unknown"
+        width = sig.width       if sig else 1
+        tip = (
+            f"<b>{n}</b><br>"
+            f"Type: {stype} &nbsp;·&nbsp; Width: [{width-1}:0]<br>"
+            f"Fan-out: {fo} &nbsp;·&nbsp; Fan-in: {fi}<br>"
+            f"Centrality: {c:.4f}<br>"
+        )
+        if fo > 0:
+            tip += "Drives: " + ", ".join(list(G.successors(n))[:6]) + "<br>"
+        if fi > 0:
+            tip += "Driven by: " + ", ".join(list(G.predecessors(n))[:6])
+        hover_texts.append(tip)
+
+    traces.append(go.Scatter(
+        x=node_x, y=node_y,
+        mode="markers+text" if show_labels else "markers",
+        text=nodes if show_labels else [],
+        textposition="top center",
+        textfont=dict(size=9, color="#94a3b8"),
+        marker=dict(
+            size=node_sizes,
+            color=node_colors,
+            line=dict(color=node_borders, width=border_widths),
+            opacity=0.95,
+        ),
+        hovertext=hover_texts,
+        hoverinfo="text",
+        hoverlabel=dict(
+            bgcolor="#0f172a",
+            bordercolor="#3b82f6",
+            font=dict(color="#e2e8f0", size=12, family="Inter"),
+        ),
+        showlegend=False,
+    ))
+
+    # ── Legend annotation ─────────────────────────────────────────────────────
+    if color_by == "Signal type":
+        legend_items = [
+            ("Input",    "#22c55e"), ("Output", "#ef4444"),
+            ("Inout",    "#f97316"), ("Wire",  "#3b82f6"),
+            ("Reg",      "#a855f7"), ("Unknown","#475569"),
+        ]
+    elif color_by == "Centrality":
+        legend_items = [
+            ("Critical (≥0.75)", "#ef4444"), ("High (≥0.50)", "#f97316"),
+            ("Medium (≥0.25)",   "#eab308"), ("Low",          "#3b82f6"),
+        ]
+    elif color_by == "Fan-out":
+        legend_items = [
+            ("Fan-out ≥6", "#ef4444"), ("Fan-out ≥3", "#f97316"),
+            ("Fan-out ≥1", "#3b82f6"), ("Sink",       "#475569"),
+        ]
+    else:
+        legend_items = [
+            ("Fan-in ≥6",  "#a855f7"), ("Fan-in ≥3", "#8b5cf6"),
+            ("Fan-in ≥1",  "#3b82f6"), ("Source",    "#475569"),
+        ]
+    legend_html = " &nbsp; ".join(
+        f'<span style="color:{c}">&#9679;</span>'
+        f'<span style="color:#64748b;font-size:0.7rem"> {lbl}</span>'
+        for lbl, c in legend_items
+    )
+
+    fig = go.Figure(
+        data=traces,
+        layout=go.Layout(
+            title=dict(
+                text=f"Signal Dependency Graph &nbsp;·&nbsp; "
+                     f"<span style='font-size:0.75em;color:#475569'>"
+                     f"{len(nodes)} nodes · {G.number_of_edges()} edges · "
+                     f"{layout_choice.split('(')[0].strip()}</span>",
+                font=dict(size=13, color="#cbd5e1"),
+                x=0,
+            ),
+            annotations=annotations,
+            showlegend=False,
+            paper_bgcolor=CHART_BG,
+            plot_bgcolor="#0a0f1e",
+            font=dict(color=FONT_COLOR),
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                       scaleanchor="y"),
+            yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+            margin=dict(l=16, r=16, t=48, b=16),
+            height=540,
+            dragmode="pan",
+            hovermode="closest",
+        ),
+    )
+
+    # Config: enable scroll-zoom + reset-axes button
+    config = dict(
+        scrollZoom=True,
+        displayModeBar=True,
+        modeBarButtonsToRemove=["select2d", "lasso2d"],
+        displaylogo=False,
+    )
+    st.plotly_chart(fig, use_container_width=True, config=config,
+                    key="dep_graph")
+    st.markdown(
+        f'<div style="font-size:0.72rem;margin:-10px 0 16px 4px">{legend_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Stats + critical nodes table ──────────────────────────────────────────
+    s1, s2 = st.columns([3, 2])
+
+    with s1:
+        crit_nodes = sorted(centrality.items(), key=lambda x: x[1], reverse=True)[:12]
+        if crit_nodes:
+            cdf = pd.DataFrame([{
+                "Signal":      n,
+                "Centrality":  round(c, 5),
+                "Type":        (rtl.signals[n].signal_type if n in rtl.signals else "unknown"),
+                "Fan-out":     fanout[n],
+                "Fan-in":      fanin[n],
+                "Downstream":  len(graph.get_downstream_signals(n)),
+            } for n, c in crit_nodes])
+            st.markdown(
+                '<div style="font-size:0.72rem;font-weight:600;color:#475569;'
+                'text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">'
+                'Most Critical Signals (by Betweenness Centrality)</div>',
+                unsafe_allow_html=True,
+            )
+            st.dataframe(
+                cdf.style.bar(subset=["Centrality"], color="#3b82f6")
+                         .bar(subset=["Fan-out"],    color="#ef4444")
+                         .bar(subset=["Downstream"], color="#a855f7")
+                         .format({"Centrality": "{:.5f}"}),
+                use_container_width=True,
+                height=min(380, 40 + len(cdf) * 36),
+            )
+
+    with s2:
+        # Node type distribution
+        type_counts: dict = {}
+        for n in nodes:
+            sig = rtl.signals.get(n)
+            t = "unknown"
+            if sig:
+                for key in ("input","output","inout","wire","reg","logic"):
+                    if key in sig.signal_type:
+                        t = key; break
+            type_counts[t] = type_counts.get(t, 0) + 1
+
+        tc_df = pd.DataFrame(
+            [{"Type": k.capitalize(), "Count": v} for k, v in type_counts.items()]
+        )
+        fig_tc = px.bar(
+            tc_df, x="Count", y="Type", orientation="h",
+            color="Type",
+            color_discrete_map={
+                k.capitalize(): TYPE_COLORS.get(k, "#475569")
+                for k in type_counts
+            },
+            text="Count",
+        )
+        fig_tc.update_traces(textposition="outside", marker_line_width=0)
+        _chart(fig_tc, "Node Type Distribution", 220)
+        fig_tc.update_layout(showlegend=False, yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_tc, use_container_width=True, key="dep_type_dist")
+
+        # Fan-out histogram
+        fo_vals = list(fanout.values())
+        fig_fo = px.histogram(
+            x=fo_vals, nbins=max(fo_vals) + 1 if fo_vals else 10,
+            color_discrete_sequence=["#3b82f6"],
+            labels={"x": "Fan-out", "y": "Signals"},
+        )
+        fig_fo.update_traces(marker_line_color="#1e293b", marker_line_width=1)
+        _chart(fig_fo, "Fan-out Distribution", 180)
+        fig_fo.update_layout(xaxis_title="Fan-out", yaxis_title="Count")
+        st.plotly_chart(fig_fo, use_container_width=True, key="dep_fanout_hist")
+
+    # ── Signal path explorer ──────────────────────────────────────────────────
+    if highlight_sig != "None":
+        with st.expander(
+            f"Path Explorer — {highlight_sig}  "
+            f"({len(hl_nodes)-1} connected signals)",
+            expanded=True,
+        ):
+            up_col, dn_col = st.columns(2)
+            with up_col:
+                up = sorted(graph.get_upstream_signals(highlight_sig))
+                st.markdown(
+                    f'<div style="font-size:0.72rem;font-weight:600;color:#22c55e;'
+                    f'text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">'
+                    f'&#8593; Upstream ({len(up)})</div>',
+                    unsafe_allow_html=True,
+                )
+                for s in up[:30]:
+                    stype = rtl.signals[s].signal_type if s in rtl.signals else "unknown"
+                    st.markdown(
+                        f'<div style="font-size:0.79rem;color:#94a3b8;padding:2px 0">'
+                        f'<span style="color:#22c55e">&#8594;</span> '
+                        f'<b>{s}</b> <span style="color:#475569">{stype}</span></div>',
+                        unsafe_allow_html=True,
+                    )
+            with dn_col:
+                dn = sorted(graph.get_downstream_signals(highlight_sig))
+                st.markdown(
+                    f'<div style="font-size:0.72rem;font-weight:600;color:#ef4444;'
+                    f'text-transform:uppercase;letter-spacing:0.8px;margin-bottom:6px">'
+                    f'&#8595; Downstream ({len(dn)})</div>',
+                    unsafe_allow_html=True,
+                )
+                for s in dn[:30]:
+                    stype = rtl.signals[s].signal_type if s in rtl.signals else "unknown"
+                    st.markdown(
+                        f'<div style="font-size:0.79rem;color:#94a3b8;padding:2px 0">'
+                        f'<span style="color:#ef4444">&#8594;</span> '
+                        f'<b>{s}</b> <span style="color:#475569">{stype}</span></div>',
+                        unsafe_allow_html=True,
+                    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1069,13 +1428,22 @@ def render_sidebar():
                     'text-transform:uppercase;letter-spacing:0.8px;'
                     'margin-bottom:8px">Upload File</div>', unsafe_allow_html=True)
         uploaded = st.file_uploader("Verilog / .SV", type=["v","sv"],
-                                    label_visibility="collapsed")
+                                    label_visibility="collapsed",
+                                    key="file_uploader")
 
         st.markdown('<div style="font-size:0.72rem;font-weight:600;color:#475569;'
                     'text-transform:uppercase;letter-spacing:0.8px;'
                     'margin:18px 0 8px">Demo Samples</div>', unsafe_allow_html=True)
         use_alu  = st.button("▶ ALU sample",        use_container_width=True)
         use_mips = st.button("▶ MIPS Pipeline",     use_container_width=True)
+
+        # Clear button — only shown when a file is loaded
+        if st.session_state.get("loaded_file_bytes"):
+            st.markdown('<hr style="border-color:#1e293b;margin:10px 0">', unsafe_allow_html=True)
+            if st.button("❌  Clear / Load new file", use_container_width=True):
+                st.session_state.pop("loaded_file_bytes", None)
+                st.session_state.pop("loaded_filename",   None)
+                st.rerun()
 
         st.markdown('<hr style="border-color:#1e293b;margin:18px 0">', unsafe_allow_html=True)
         st.markdown('<div style="font-size:0.72rem;font-weight:600;color:#475569;'
@@ -1143,18 +1511,24 @@ def main():
     uploaded, use_alu, use_mips, risk_threshold, waveform_cycles, show_all = \
         render_sidebar()
 
-    base_dir   = os.path.join(os.path.dirname(__file__), "..", "samples")
-    file_bytes = None
-    filename   = ""
+    base_dir = os.path.join(os.path.dirname(__file__), "..", "samples")
 
-    if use_alu:
+    # ── Persist the loaded file in session_state so widget reruns don’t lose it ──
+    # Priority: new upload > demo button > existing session state
+    if uploaded is not None:
+        st.session_state["loaded_file_bytes"] = uploaded.getvalue()
+        st.session_state["loaded_filename"]   = uploaded.name
+    elif use_alu:
         with open(os.path.join(base_dir, "alu.v"), "rb") as f:
-            file_bytes = f.read(); filename = "alu.v"
-    if use_mips:
+            st.session_state["loaded_file_bytes"] = f.read()
+        st.session_state["loaded_filename"] = "alu.v"
+    elif use_mips:
         with open(os.path.join(base_dir, "mips_pipeline.v"), "rb") as f:
-            file_bytes = f.read(); filename = "mips_pipeline.v"
-    if uploaded:
-        file_bytes = uploaded.getvalue(); filename = uploaded.name
+            st.session_state["loaded_file_bytes"] = f.read()
+        st.session_state["loaded_filename"] = "mips_pipeline.v"
+
+    file_bytes = st.session_state.get("loaded_file_bytes")
+    filename   = st.session_state.get("loaded_filename", "")
 
     if file_bytes is None:
         render_header()
