@@ -1,5 +1,5 @@
 """
-RTL Insight Engine v2 — Advanced Streamlit Dashboard
+RTL Health Analyzer — Professional Streamlit Dashboard
 Run: streamlit run dashboard/app.py
 """
 
@@ -14,577 +14,880 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from analyzer import analyze_rtl
 
-
-@st.cache_data(show_spinner=False)
-def _run_analysis(file_bytes: bytes):
-    """Cache RTL analysis by file content — avoids re-running on every slider change."""
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.v', mode='wb') as tmp:
-        tmp.write(file_bytes)
-        tmp_path = tmp.name
-    try:
-        return analyze_rtl(tmp_path)
-    finally:
-        try:
-            os.unlink(tmp_path)
-        except Exception:
-            pass
-
-# ── Page config ─────────────────────────────────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="RTL Insight Engine",
-    page_icon="⚡",
+    page_title="RTL Health Analyzer",
+    page_icon="🔬",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
 )
 
-# ── CSS ──────────────────────────────────────────────────────────────────────
+# ── Global CSS ────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-  .main-title {
-    font-size:2.5rem;font-weight:900;
-    background:linear-gradient(90deg,#667eea,#764ba2);
-    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-  }
-  .subtitle { color:#888;font-size:1rem; }
-  div[data-testid="stMetric"] {
-    background:rgba(102,126,234,0.08);border-radius:12px;padding:12px;
-  }
-  .lint-error   { color:#ef4444;font-weight:bold; }
-  .lint-warning { color:#f97316;font-weight:bold; }
-  .lint-info    { color:#eab308; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+
+.navbar {
+    background: linear-gradient(135deg, #0f172a 0%, #1e3a5f 100%);
+    border: 1px solid #1e40af;
+    padding: 20px 28px;
+    border-radius: 12px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.navbar-title { font-size:1.75rem; font-weight:700; color:#f8fafc; letter-spacing:-0.5px; }
+.navbar-sub   { font-size:0.82rem; color:#94a3b8; margin-top:3px; }
+.navbar-badge {
+    background:#1d4ed8; color:#dbeafe;
+    font-size:0.72rem; font-weight:600;
+    padding:4px 14px; border-radius:999px; letter-spacing:0.4px;
+}
+
+.mcard {
+    background:#0f172a; border:1px solid #1e293b;
+    border-radius:12px; padding:20px 22px;
+    position:relative; overflow:hidden; height:100%;
+}
+.mcard-accent {
+    position:absolute; top:0; left:0; right:0;
+    height:3px; border-radius:12px 12px 0 0;
+}
+.mcard-label  { font-size:0.7rem; font-weight:600; color:#64748b;
+                text-transform:uppercase; letter-spacing:0.8px; margin-bottom:6px; }
+.mcard-value  { font-size:2rem; font-weight:700; color:#f1f5f9; line-height:1.1; }
+.mcard-sub    { font-size:0.72rem; color:#475569; margin-top:5px; }
+
+.sec-header {
+    font-size:0.72rem; font-weight:600; color:#475569;
+    text-transform:uppercase; letter-spacing:1px;
+    padding-bottom:10px; border-bottom:1px solid #1e293b; margin-bottom:18px;
+}
+
+.fix-card {
+    background:#0f172a; border:1px solid #1e293b;
+    border-radius:10px; padding:16px 20px; margin-bottom:4px;
+}
+.fix-card-code {
+    font-family:'JetBrains Mono','Fira Code',monospace; font-size:0.8rem;
+    background:#1e293b; padding:7px 12px; border-radius:6px;
+    color:#93c5fd; margin:8px 0; word-break:break-all;
+}
+.fix-item { font-size:0.81rem; color:#94a3b8; padding:3px 0; }
+
+.rtl-viewer {
+    background:#0a0f1e; border:1px solid #1e293b;
+    border-radius:10px; padding:12px 0;
+    max-height:500px; overflow-y:auto;
+    font-family:'JetBrains Mono','Fira Code','Courier New',monospace;
+}
+.rtl-row {
+    display:flex; align-items:baseline; gap:14px;
+    padding:2px 14px; border-left:3px solid transparent;
+}
+.rtl-num   { color:#334155; min-width:30px; text-align:right;
+             font-size:0.75rem; user-select:none; flex-shrink:0; }
+.rtl-code  { font-size:0.8rem; color:#94a3b8; flex:1; white-space:pre; }
+.rtl-badge { font-size:0.65rem; font-weight:600; flex-shrink:0; }
+.rtl-crit  { background:#450a0a22; border-left-color:#ef4444; }
+.rtl-high  { background:#43140722; border-left-color:#f97316; }
+.rtl-med   { background:#42200622; border-left-color:#eab308; }
+
+div[data-testid="stMetric"] {
+    background:#0f172a; border:1px solid #1e293b; border-radius:10px; padding:14px;
+}
+[data-testid="stFileUploader"] {
+    border:1px solid #1e293b !important; border-radius:10px !important;
+}
+section[data-testid="stSidebar"] { background:#0d1424; border-right:1px solid #1e293b; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## ⚡ RTL Insight Engine")
-    st.markdown("*v2.0 — Advanced RTL Analysis*")
-    st.divider()
+# ── Chart helpers ──────────────────────────────────────────────────────────────
+CHART_BG   = "rgba(0,0,0,0)"
+FONT_COLOR = "#94a3b8"
+GRID_COLOR = "#1e293b"
+RISK_COLORS = {
+    "🔴 Critical": "#ef4444", "🟠 High": "#f97316",
+    "🟡 Medium":   "#eab308", "🟢 Low":  "#22c55e",
+}
 
-    uploaded = st.file_uploader(
-        "📂 Upload Verilog/SV File",
-        type=['v', 'sv', 'vh']
+def _chart(fig, title="", height=320):
+    fig.update_layout(
+        title=dict(text=title, font=dict(size=12, color="#cbd5e1"), x=0),
+        paper_bgcolor=CHART_BG, plot_bgcolor="#0d1424",
+        font=dict(color=FONT_COLOR, size=11),
+        margin=dict(l=16, r=16, t=38, b=16), height=height,
+        xaxis=dict(gridcolor=GRID_COLOR, linecolor=GRID_COLOR, zerolinecolor=GRID_COLOR),
+        yaxis=dict(gridcolor=GRID_COLOR, linecolor=GRID_COLOR, zerolinecolor=GRID_COLOR),
     )
-    col_s1, col_s2 = st.columns(2)
-    with col_s1:
-        use_alu = st.button("🎮 ALU Demo", use_container_width=True)
-    with col_s2:
-        use_mips = st.button("🖥️ MIPS Demo", use_container_width=True)
+    return fig
 
-    st.divider()
-    st.markdown("### ⚙️ Options")
-    show_all      = st.checkbox("Show All Signals", False)
-    risk_threshold = st.slider("Risk Threshold", 0.0, 1.0, 0.3, 0.05)
-    waveform_cycles = st.slider("Waveform Cycles", 16, 64, 32, 8)
+# ── Cache ─────────────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def _run_analysis(file_bytes: bytes):
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.v', mode='wb') as tmp:
+        tmp.write(file_bytes); pth = tmp.name
+    try:
+        return analyze_rtl(pth)
+    finally:
+        try: os.unlink(pth)
+        except Exception: pass
 
-# ── Load file ────────────────────────────────────────────────────────────────
-filepath = None
-base_dir = os.path.join(os.path.dirname(__file__), '..', 'samples')
 
-if use_alu:
-    filepath = os.path.join(base_dir, 'alu.v')
-if use_mips:
-    filepath = os.path.join(base_dir, 'mips_pipeline.v')
-if uploaded:
-    with tempfile.NamedTemporaryFile(delete=False, suffix='.v', mode='wb') as f:
-        f.write(uploaded.getvalue())
-        filepath = f.name
+# ─────────────────────────────────────────────────────────────────────────────
+# render_header
+# ─────────────────────────────────────────────────────────────────────────────
+def render_header(module_name=""):
+    sub = (f"Analyzing module: <b>{module_name}</b>"
+           if module_name else "Upload a Verilog / SystemVerilog file to begin")
+    st.markdown(f"""
+    <div class="navbar">
+      <div>
+        <div class="navbar-title">🔬 RTL Health Analyzer</div>
+        <div class="navbar-sub">{sub}</div>
+      </div>
+      <div class="navbar-badge">v2.0 &nbsp;·&nbsp; Verilog / SystemVerilog</div>
+    </div>""", unsafe_allow_html=True)
 
-# ── Header ───────────────────────────────────────────────────────────────────
-st.markdown('<p class="main-title">⚡ RTL Insight Engine</p>', unsafe_allow_html=True)
-st.markdown('<p class="subtitle">Unified Lint · CDC · Power · Waveform Analyzer for Verilog/SystemVerilog</p>',
-            unsafe_allow_html=True)
-st.divider()
 
-# ── Analysis ─────────────────────────────────────────────────────────────────
-if filepath:
-    with st.spinner("🔍 Running full RTL analysis pipeline..."):
-        try:
-            with open(filepath, 'rb') as _fh:
-                _fbytes = _fh.read()
-            rtl, graph, records, health, lint_violations, waveforms, toggles = _run_analysis(_fbytes)
-        except Exception as e:
-            st.error(f"Analysis error: {e}")
-            st.stop()
+# ─────────────────────────────────────────────────────────────────────────────
+# render_summary_cards
+# ─────────────────────────────────────────────────────────────────────────────
+def render_summary_cards(df, health, lint_violations, rtl):
+    score    = health["score"]
+    grade    = health["grade"].split(" ", 1)[-1]
+    crit     = health.get("critical_count", 0)
+    high     = health.get("high_count", 0)
+    cdc_n    = int(df["has_cdc_issue"].sum()) if "has_cdc_issue" in df.columns else 0
+    power_n  = int((df["power_risk"] > 0.5).sum()) if "power_risk" in df.columns else 0
+    hc = "#22c55e" if score >= 80 else ("#eab308" if score >= 60 else ("#f97316" if score >= 40 else "#ef4444"))
 
-    df = pd.DataFrame(records)
-    lint_df = pd.DataFrame(lint_violations) if lint_violations else pd.DataFrame()
-    df_risk = df[df['overall_risk'] >= risk_threshold] if not show_all else df
+    cards = [
+        (hc,       str(score),              "Health Score",        grade),
+        ("#ef4444", str(crit),              "Critical Ops",        f"{high} high-risk"),
+        ("#f97316", str(len(lint_violations)),"Lint Violations",   "20-rule checker"),
+        ("#a855f7", str(cdc_n),             "CDC Signals",         "Domain crossings"),
+        ("#3b82f6", str(power_n),           "High Power Signals",  "Toggle > 0.5"),
+        ("#06b6d4", str(len(rtl.signals)),  "Signals Parsed",      f"{len(rtl.clock_signals)} clk · {len(rtl.reset_signals)} rst"),
+        ("#eab308", str(len(df)),           "Operations",          f"avg risk {health.get('avg_risk',0):.3f}"),
+        ("#64748b", rtl.module_name,        "Module",              "Top-level entity"),
+    ]
 
-    # ── Health Banner ────────────────────────────────────────────────────────
-    st.markdown("## 🏥 RTL Health Dashboard")
+    st.markdown('<div class="sec-header">Overview</div>', unsafe_allow_html=True)
+    row1 = st.columns(4)
+    row2 = st.columns(4)
+    rows = row1 + row2
+    for col, (color, val, lbl, sub) in zip(rows, cards):
+        with col:
+            st.markdown(f"""
+            <div class="mcard">
+              <div class="mcard-accent" style="background:{color}"></div>
+              <div class="mcard-label">{lbl}</div>
+              <div class="mcard-value" style="color:{color}">{val}</div>
+              <div class="mcard-sub">{sub}</div>
+            </div>""", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:8px'></div>", unsafe_allow_html=True)
 
-    hc_map = {'green':'#22c55e','orange':'#f97316','darkorange':'#ea580c','red':'#ef4444'}
-    hc = hc_map.get(health['color'], '#888')
 
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
+# ─────────────────────────────────────────────────────────────────────────────
+# render_risk_tables
+# ─────────────────────────────────────────────────────────────────────────────
+def _score_color(v):
+    if v >= 0.75: return "background:#450a0a;color:#fca5a5"
+    if v >= 0.5:  return "background:#431407;color:#fdba74"
+    if v >= 0.3:  return "background:#422006;color:#fde68a"
+    return "background:#052e16;color:#86efac"
+
+def render_risk_tables(df):
+    st.markdown('<div class="sec-header">Risk Rankings</div>', unsafe_allow_html=True)
+
+    t1, t2, t3, t4 = st.tabs(["💥 Destructive", "🎲 Intermittent", "⚡ CDC", "🔋 Power"])
+    pairs = [
+        (t1, "destructive_risk",  "Destructive",  "#ef4444"),
+        (t2, "intermittent_risk", "Intermittent", "#f97316"),
+        (t3, "cdc_risk",          "CDC",           "#a855f7"),
+        (t4, "power_risk",        "Power",         "#3b82f6"),
+    ]
+    for tab, col, label, color in pairs:
+        with tab:
+            if col not in df.columns:
+                st.info(f"No {label} data."); continue
+            cols_show = [c for c in ["line","signal","operator","raw_line",col,"risk_level"] if c in df.columns]
+            tbl = (df[cols_show].sort_values(col, ascending=False)
+                                .head(20).reset_index(drop=True))
+            tbl.index += 1; tbl.index.name = "Rank"
+
+            rc1, rc2 = st.columns([3, 2])
+            with rc1:
+                st.dataframe(
+                    tbl.style.map(_score_color, subset=[col])
+                             .format({col: "{:.4f}"}),
+                    use_container_width=True, height=360,
+                )
+            with rc2:
+                fig = px.bar(
+                    tbl.reset_index(), x="signal", y=col,
+                    color=col,
+                    color_continuous_scale=["#1e3a5f", color, "#ef4444"],
+                    text=col,
+                )
+                fig.update_traces(texttemplate="%{text:.2f}", textposition="outside",
+                                  marker_line_width=0)
+                _chart(fig, f"Top {label} Risk by Signal", height=360)
+                fig.update_layout(showlegend=False, coloraxis_showscale=False)
+                st.plotly_chart(fig, use_container_width=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# render_charts
+# ─────────────────────────────────────────────────────────────────────────────
+def render_charts(df, toggles, waveform_cycles, waveforms):
+    st.markdown('<div class="sec-header">Visualizations</div>', unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
     with c1:
-        st.markdown(f"""
-        <div style="background:linear-gradient(135deg,{hc}22,{hc}44);
-                    border:2px solid {hc};border-radius:16px;
-                    padding:20px;text-align:center">
-          <div style="font-size:2.8rem;font-weight:900;color:{hc}">{health['score']}</div>
-          <div style="color:{hc};font-weight:600">Health Score</div>
-          <div style="color:#aaa;font-size:0.8rem">{health['grade']}</div>
-        </div>""", unsafe_allow_html=True)
+        top = df.sort_values("overall_risk", ascending=False).head(12).copy()
+        top["label"] = top.apply(lambda r: f"L{r['line']} {r['signal']}", axis=1)
+        fig = px.bar(top, x="overall_risk", y="label", orientation="h",
+                     color="overall_risk",
+                     color_continuous_scale=["#1e3a5f","#3b82f6","#ef4444"])
+        fig.update_traces(marker_line_width=0)
+        fig.update_layout(yaxis=dict(autorange="reversed"))
+        _chart(fig, "Top 12 Riskiest Lines", 320)
+        fig.update_layout(coloraxis_showscale=False,
+                          xaxis_title="Risk Score", yaxis_title="")
+        st.plotly_chart(fig, use_container_width=True)
+
     with c2:
-        st.metric("📊 Operations", len(records))
+        cnts = df["risk_level"].value_counts().reset_index()
+        cnts.columns = ["Level","Count"]
+        fig2 = px.pie(cnts, names="Level", values="Count",
+                      color="Level", color_discrete_map=RISK_COLORS, hole=0.55)
+        fig2.update_traces(textinfo="percent+label",
+                           marker=dict(line=dict(color="#0d1424", width=2)))
+        _chart(fig2, "Risk Level Distribution", 320)
+        fig2.update_layout(showlegend=False, plot_bgcolor=CHART_BG)
+        st.plotly_chart(fig2, use_container_width=True)
+
     with c3:
-        st.metric("🔴 Critical", health.get('critical_count', 0))
+        fig3 = px.histogram(df, x="overall_risk", nbins=20,
+                            color_discrete_sequence=["#3b82f6"])
+        fig3.update_traces(marker_line_color="#1e293b", marker_line_width=1)
+        _chart(fig3, "Risk Score Frequency", 320)
+        fig3.update_layout(xaxis_title="Risk Score", yaxis_title="Count")
+        st.plotly_chart(fig3, use_container_width=True)
+
+    c4, c5 = st.columns(2)
     with c4:
-        st.metric("🟠 High Risk", health.get('high_count', 0))
-    with c5:
-        st.metric("🪲 Lint Issues", len(lint_violations))
-    with c6:
-        st.metric("📡 Signals", len(rtl.signals))
-
-    st.divider()
-
-    # ── Tabs ─────────────────────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-        "🎯 Risk Overview",
-        "🪲 Lint Checker",
-        "📊 Metrics",
-        "🌊 Waveform",
-        "🕸️ Dependency",
-        "⚡ CDC",
-        "💡 Fix Suggestions"
-    ])
-
-    # ── Tab 1: Risk Overview ─────────────────────────────────────────────────
-    with tab1:
-        st.markdown("### 🎯 Risk Violations Table")
-
-        sf1, sf2 = st.columns([3, 1])
-        with sf1:
-            sig_search = st.text_input("🔍 Filter by signal name", "", key="sig_search")
-        with sf2:
-            op_opts = ["All"] + sorted(df_risk['operator'].unique().tolist())
-            op_sel  = st.selectbox("Operator", op_opts, key="op_sel")
-
-        filtered_risk = df_risk.copy()
-        if sig_search:
-            filtered_risk = filtered_risk[
-                filtered_risk['signal'].str.contains(sig_search, case=False, na=False)
-            ]
-        if op_sel != "All":
-            filtered_risk = filtered_risk[filtered_risk['operator'] == op_sel]
-
-        def highlight_risk(val):
-            return {
-                '🔴 Critical':'background-color:#ef444420;color:#ef4444;font-weight:bold',
-                '🟠 High':'background-color:#f9731620;color:#f97316;font-weight:bold',
-                '🟡 Medium':'background-color:#eab30820;color:#eab308',
-                '🟢 Low':'background-color:#22c55e20;color:#22c55e'
-            }.get(val,'')
-
-        disp = ['line','raw_line','signal','operator','overall_risk',
-                'destructive_risk','intermittent_risk','cdc_risk','power_risk','risk_level']
-        avail = [c for c in disp if c in filtered_risk.columns]
-        top_df = filtered_risk[avail].sort_values('overall_risk', ascending=False).head(50)
-        st.dataframe(
-            top_df.style.map(highlight_risk, subset=['risk_level']),
-            use_container_width=True, height=380
-        )
-
-        col_b1, col_b2 = st.columns(2)
-        with col_b1:
-            risk_data = pd.DataFrame({
-                'Risk Type': ['Destructive','Intermittent','CDC','Power'],
-                'Score': [df['destructive_risk'].mean(), df['intermittent_risk'].mean(),
-                          df['cdc_risk'].mean(), df['power_risk'].mean()]
-            })
-            fig = px.bar(risk_data, x='Risk Type', y='Score',
-                         color='Score',
-                         color_continuous_scale=['#22c55e','#eab308','#f97316','#ef4444'],
-                         title="Average Risk by Category")
-            fig.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col_b2:
-            counts = df['risk_level'].value_counts().reset_index()
-            counts.columns = ['Level','Count']
-            fig2 = px.pie(counts, names='Level', values='Count',
-                          title="Risk Distribution",
-                          color='Level',
-                          color_discrete_map={
-                              '🔴 Critical':'#ef4444','🟠 High':'#f97316',
-                              '🟡 Medium':'#eab308','🟢 Low':'#22c55e'
-                          })
-            fig2.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig2, use_container_width=True)
-
-        # Radar chart — risk profile
-        st.markdown("### 🕷️ Risk Profile Radar")
-        categories = ['Destructive','Intermittent','CDC','Power','Complexity']
-        values = [
-            df['destructive_risk'].mean(),
-            df['intermittent_risk'].mean(),
-            df['cdc_risk'].mean(),
-            df['power_risk'].mean(),
-            df['structural_complexity'].mean()
-        ]
-        fig_radar = go.Figure(go.Scatterpolar(
-            r=values + [values[0]],
-            theta=categories + [categories[0]],
-            fill='toself',
-            fillcolor='rgba(102,126,234,0.3)',
-            line=dict(color='#667eea', width=2)
+        cats = ["Destructive","Intermittent","CDC","Power","Complexity"]
+        vals = [df[k].mean() for k in ["destructive_risk","intermittent_risk",
+                                        "cdc_risk","power_risk","structural_complexity"]]
+        fig4 = go.Figure(go.Scatterpolar(
+            r=vals+[vals[0]], theta=cats+[cats[0]],
+            fill="toself",
+            fillcolor="rgba(59,130,246,0.12)",
+            line=dict(color="#3b82f6", width=2),
+            marker=dict(color="#3b82f6", size=5),
         ))
-        fig_radar.update_layout(
-            polar=dict(radialaxis=dict(visible=True, range=[0,1])),
-            paper_bgcolor='rgba(0,0,0,0)', font_color='white',
-            title="Module Risk Radar"
+        fig4.update_layout(
+            polar=dict(
+                bgcolor="#0d1424",
+                radialaxis=dict(visible=True, range=[0,1], gridcolor=GRID_COLOR,
+                                tickfont=dict(size=9,color="#475569"), linecolor=GRID_COLOR),
+                angularaxis=dict(gridcolor=GRID_COLOR, linecolor=GRID_COLOR,
+                                 tickfont=dict(color="#94a3b8")),
+            ),
+            paper_bgcolor=CHART_BG, font=dict(color=FONT_COLOR),
+            margin=dict(l=30,r=30,t=50,b=30), height=320,
+            title=dict(text="Risk Profile Radar", font=dict(size=12,color="#cbd5e1"),x=0),
         )
-        st.plotly_chart(fig_radar, use_container_width=True)
+        st.plotly_chart(fig4, use_container_width=True)
 
-    # ── Tab 2: Lint Checker ──────────────────────────────────────────────────
-    with tab2:
-        st.markdown("### 🪲 RTL Lint Rule Checker — 20 Rules")
+    with c5:
+        avg_df = pd.DataFrame({
+            "Category": ["Destructive","Intermittent","CDC","Power"],
+            "Score":    [df["destructive_risk"].mean(), df["intermittent_risk"].mean(),
+                         df["cdc_risk"].mean(), df["power_risk"].mean()],
+            "Color":    ["#ef4444","#f97316","#a855f7","#3b82f6"],
+        })
+        fig5 = px.bar(avg_df, x="Category", y="Score",
+                      color="Category",
+                      color_discrete_map={r["Category"]:r["Color"] for _,r in avg_df.iterrows()},
+                      text="Score")
+        fig5.update_traces(texttemplate="%{text:.3f}", textposition="outside",
+                           marker_line_width=0)
+        _chart(fig5, "Average Risk by Category", 320)
+        fig5.update_layout(showlegend=False, yaxis=dict(range=[0,1.1]))
+        st.plotly_chart(fig5, use_container_width=True)
 
-        if lint_df.empty:
-            st.success("✅ No lint violations found!")
-        else:
-            # Summary counts
-            lc1, lc2, lc3 = st.columns(3)
-            errors   = lint_df[lint_df['severity'].str.contains('Error')] if 'severity' in lint_df else pd.DataFrame()
-            warnings = lint_df[lint_df['severity'].str.contains('Warning')] if 'severity' in lint_df else pd.DataFrame()
-            infos    = lint_df[lint_df['severity'].str.contains('Info')] if 'severity' in lint_df else pd.DataFrame()
-
-            with lc1: st.metric("🔴 Errors",   len(errors))
-            with lc2: st.metric("🟠 Warnings", len(warnings))
-            with lc3: st.metric("🟡 Info",     len(infos))
-
-            st.markdown("#### Violations")
-            lf1, lf2 = st.columns(2)
-            with lf1:
-                sev_opts = ['All'] + sorted(lint_df['severity'].unique().tolist())
-                sev_sel  = st.selectbox("Filter by severity", sev_opts, key="lint_sev")
-            with lf2:
-                rule_opts = ['All'] + sorted(lint_df['rule_id'].unique().tolist())
-                rule_sel  = st.selectbox("Filter by rule ID", rule_opts, key="lint_rule")
-
-            filt_lint = lint_df.copy()
-            if sev_sel != 'All':
-                filt_lint = filt_lint[filt_lint['severity'] == sev_sel]
-            if rule_sel != 'All':
-                filt_lint = filt_lint[filt_lint['rule_id'] == rule_sel]
-            st.caption(f"{len(filt_lint)} of {len(lint_df)} violations shown")
-
-            for _, row in filt_lint.iterrows():
-                sev = row.get('severity','')
-                icon = '🔴' if 'Error' in sev else ('🟠' if 'Warning' in sev else '🟡')
-                with st.expander(
-                    f"{icon} [{row.get('rule_id','')}] Line {row.get('line',0)}: {row.get('message','')}"
-                ):
-                    st.code(row.get('raw_line',''), language='verilog')
-                    st.markdown(f"**🔧 Fix:** {row.get('fix','')}")
-
-            # Lint severity chart
-            sev_counts = lint_df['severity'].value_counts().reset_index()
-            sev_counts.columns = ['Severity','Count']
-            fig_lint = px.bar(sev_counts, x='Severity', y='Count',
-                              color='Severity',
-                              color_discrete_map={
-                                  '🔴 Error':'#ef4444',
-                                  '🟠 Warning':'#f97316',
-                                  '🟡 Info':'#eab308'
-                              },
-                              title="Lint Violations by Severity")
-            fig_lint.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_lint, use_container_width=True)
-
-    # ── Tab 3: Metrics ───────────────────────────────────────────────────────
-    with tab3:
-        st.markdown("### � Signal Inventory")
-        tc1, tc2 = st.columns(2)
-        with tc1:
-            type_counts = pd.DataFrame(
-                [{'Type': s.signal_type} for s in rtl.signals.values()]
-            )['Type'].value_counts().reset_index()
-            type_counts.columns = ['Type', 'Count']
-            fig_types = px.pie(type_counts, names='Type', values='Count',
-                               title="Signal Type Distribution",
-                               color_discrete_sequence=px.colors.qualitative.Set3)
-            fig_types.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_types, use_container_width=True)
-        with tc2:
-            width_df = pd.DataFrame(
-                [{'Signal': n, 'Width': s.width, 'Type': s.signal_type}
-                 for n, s in rtl.signals.items()]
-            ).sort_values('Width', ascending=False)
-            fig_widths = px.bar(width_df.head(20), x='Signal', y='Width',
-                                color='Type', title="Signal Bit-Widths (Top 20)",
-                                color_discrete_sequence=px.colors.qualitative.Set3)
-            fig_widths.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_widths, use_container_width=True)
-
-        st.markdown("### �📊 Signal Metrics Table")
-        mcols = ['signal','initial_weight','impact_score','susceptibility',
-                 'execution_probability','structural_complexity']
-        avail_m = [c for c in mcols if c in df.columns]
-        st.dataframe(
-            df[avail_m].drop_duplicates('signal').sort_values('impact_score', ascending=False),
-            use_container_width=True, height=300
-        )
-
-        st.markdown("### 🗺️ Metrics Heatmap")
-        heat_df = df[avail_m].copy()
-        heat_df = heat_df.drop_duplicates(subset=['signal'])
-        heat_df = heat_df.set_index('signal').apply(pd.to_numeric, errors='coerce')
-        fig_heat = px.imshow(heat_df.T,
-                             color_continuous_scale='RdYlGn_r',
-                             title="Metrics Heatmap (Red = High)",
-                             aspect='auto')
-        fig_heat.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-        st.plotly_chart(fig_heat, use_container_width=True)
-
-        col_m1, col_m2 = st.columns(2)
-        with col_m1:
-            fig_imp = px.bar(
-                df.drop_duplicates('signal').sort_values('impact_score', ascending=False),
-                x='signal', y='impact_score', color='impact_score',
-                color_continuous_scale='Reds', title="Impact Score per Signal"
-            )
-            fig_imp.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_imp, use_container_width=True)
-
-        with col_m2:
-            fig_sc = px.scatter(
-                df, x='impact_score', y='structural_complexity',
-                size='overall_risk', color='risk_level',
-                hover_data=['signal','raw_line'],
-                title="Impact vs Complexity",
-                color_discrete_map={
-                    '🔴 Critical':'#ef4444','🟠 High':'#f97316',
-                    '🟡 Medium':'#eab308','🟢 Low':'#22c55e'
-                }
-            )
-            fig_sc.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_sc, use_container_width=True)
-
-    # ── Tab 4: Waveform ──────────────────────────────────────────────────────
-    with tab4:
-        st.markdown("### 🌊 Simulated Signal Waveforms")
-        st.caption("Synthetic waveforms based on execution probability — shows toggle activity per signal")
-
-        if waveforms:
-            # Toggle count bar
-            toggle_df = pd.DataFrame([
-                {'Signal': s, 'Toggles': t, 'Activity': 'High' if t > 10 else ('Medium' if t > 5 else 'Low')}
-                for s, t in sorted(toggles.items(), key=lambda x: x[1], reverse=True)
+    # Waveform row
+    if toggles and waveforms:
+        w1, w2 = st.columns([2,3])
+        with w1:
+            tdf = pd.DataFrame([
+                {"Signal":s,"Toggles":t,
+                 "Activity":"High" if t>10 else ("Medium" if t>5 else "Low")}
+                for s,t in sorted(toggles.items(), key=lambda x:x[1], reverse=True)
             ])
-
-            fig_tog = px.bar(
-                toggle_df, x='Signal', y='Toggles',
-                color='Activity',
-                color_discrete_map={'High':'#ef4444','Medium':'#f97316','Low':'#22c55e'},
-                title=f"Signal Toggle Count over {waveform_cycles} cycles (High toggles = High power)"
-            )
-            fig_tog.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_tog, use_container_width=True)
-
-            # Waveform display
-            st.markdown("#### Digital Waveform View")
-            cycles = list(range(waveform_cycles))
-            signals_to_show = list(waveforms.keys())[:8]
-
-            fig_wave = go.Figure()
-            for idx, sig in enumerate(signals_to_show):
+            fw = px.bar(tdf, x="Toggles", y="Signal", orientation="h",
+                        color="Activity",
+                        color_discrete_map={"High":"#ef4444","Medium":"#f97316","Low":"#22c55e"})
+            fw.update_traces(marker_line_width=0)
+            fw.update_layout(yaxis=dict(autorange="reversed"))
+            _chart(fw, f"Toggle Activity ({waveform_cycles} cycles)", 300)
+            st.plotly_chart(fw, use_container_width=True)
+        with w2:
+            sigs = list(waveforms.keys())[:8]
+            cyc  = list(range(waveform_cycles))
+            fw2  = go.Figure()
+            for i, sig in enumerate(sigs):
                 wave = waveforms[sig][:waveform_cycles]
-                # Offset each signal vertically
-                offset = idx * 2
-                y_vals = [v + offset for v in wave]
-                fig_wave.add_trace(go.Scatter(
-                    x=cycles, y=y_vals,
-                    mode='lines',
-                    name=sig,
-                    line=dict(width=2, shape='hv'),
+                fw2.add_trace(go.Scatter(
+                    x=cyc, y=[v+i*2.2 for v in wave],
+                    mode="lines", name=sig,
+                    line=dict(width=1.8, shape="hv",
+                              color=f"hsl({i*42},65%,58%)"),
                 ))
-
-            fig_wave.update_layout(
-                title="Digital Waveform Simulation",
+            fw2.update_layout(
+                title=dict(text="Digital Waveform Simulation",
+                           font=dict(size=12,color="#cbd5e1"),x=0),
                 xaxis_title="Clock Cycle",
-                yaxis=dict(
-                    tickvals=[i*2+0.5 for i in range(len(signals_to_show))],
-                    ticktext=signals_to_show,
-                    showgrid=False
-                ),
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(30,30,46,0.8)',
-                font_color='white',
-                height=400,
-                showlegend=False
+                yaxis=dict(tickvals=[i*2.2+1 for i in range(len(sigs))],
+                           ticktext=sigs, showgrid=False,
+                           tickfont=dict(size=10,color="#94a3b8")),
+                paper_bgcolor=CHART_BG, plot_bgcolor="#0a0f1e",
+                font=dict(color=FONT_COLOR), showlegend=False,
+                height=300, margin=dict(l=16,r=16,t=38,b=16),
             )
-            st.plotly_chart(fig_wave, use_container_width=True)
+            st.plotly_chart(fw2, use_container_width=True)
 
-    # ── Tab 5: Dependency Graph ───────────────────────────────────────────────
-    with tab5:
-        st.markdown("### 🕸️ Signal Dependency Graph")
-        G = graph.graph
-        if G.nodes:
-            pos = nx.spring_layout(G, seed=42, k=2)
 
-            edge_x, edge_y = [], []
-            for u, v in G.edges():
-                x0,y0 = pos[u]; x1,y1 = pos[v]
-                edge_x += [x0,x1,None]; edge_y += [y0,y1,None]
+# ─────────────────────────────────────────────────────────────────────────────
+# render_code_viewer
+# ─────────────────────────────────────────────────────────────────────────────
+def render_code_viewer(file_bytes: bytes, records: list, filename=""):
+    st.markdown('<div class="sec-header">RTL Code Viewer</div>', unsafe_allow_html=True)
+    try:
+        src = file_bytes.decode("utf-8", errors="replace")
+    except Exception:
+        st.warning("Cannot decode source."); return
 
-            def node_color(n):
-                s = rtl.signals.get(n)
-                if not s: return '#888'
-                if 'output' in s.signal_type: return '#ef4444'
-                if 'input'  in s.signal_type: return '#22c55e'
-                return '#667eea'
+    lines = src.splitlines()
+    risk_map = {}
+    for r in records:
+        ln = r.get("line", 0)
+        if ln and ln not in risk_map:
+            risk_map[ln] = (r.get("risk_level",""), r.get("overall_risk",0))
 
-            node_trace = go.Scatter(
-                x=[pos[n][0] for n in G.nodes],
-                y=[pos[n][1] for n in G.nodes],
-                mode='markers+text',
-                text=list(G.nodes),
-                textposition='top center',
-                marker=dict(
-                    size=20,
-                    color=[node_color(n) for n in G.nodes],
-                    line=dict(width=2, color='white')
+    html = []
+    for i, line in enumerate(lines, 1):
+        lvl, sc = risk_map.get(i, ("", 0))
+        esc = line.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+        if   "Critical" in lvl: cls,bc,badge = "rtl-row rtl-crit","#ef4444",f'<span class="rtl-badge" style="color:#ef4444">CRIT {sc:.2f}</span>'
+        elif "High"     in lvl: cls,bc,badge = "rtl-row rtl-high","#f97316",f'<span class="rtl-badge" style="color:#f97316">HIGH {sc:.2f}</span>'
+        elif "Medium"   in lvl: cls,bc,badge = "rtl-row rtl-med", "#eab308",f'<span class="rtl-badge" style="color:#eab308">MED {sc:.2f}</span>'
+        else:                   cls,bc,badge = "rtl-row","","" 
+        html.append(
+            f'<div class="{cls}">'
+            f'<span class="rtl-num">{i}</span>'
+            f'<span class="rtl-code">{esc}</span>'
+            f'{badge}</div>'
+        )
+
+    legend = ('<span style="font-size:0.7rem;color:#475569">'
+              '&nbsp;■<span style="color:#ef4444"> Critical</span>'
+              '&nbsp;■<span style="color:#f97316"> High</span>'
+              '&nbsp;■<span style="color:#eab308"> Medium</span></span>')
+    fname_html = f' &nbsp;<span style="color:#3b82f6">{filename}</span>' if filename else ""
+    st.markdown(
+        f'<div style="font-size:0.78rem;color:#475569;margin-bottom:6px">'
+        f'Source{fname_html}&nbsp;&nbsp;{legend}</div>'
+        f'<div class="rtl-viewer">{"".join(html)}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# render_risk_explanation
+# ─────────────────────────────────────────────────────────────────────────────
+def _explain(row, toggles):
+    parts = []
+    if row.get("destructive_risk",0) >= 0.5:
+        parts.append(f'High <b>destructive risk ({row["destructive_risk"]:.3f})</b> — '
+                     'fault here propagates to many downstream signals.')
+    if row.get("intermittent_risk",0) >= 0.5:
+        parts.append(f'High <b>intermittent risk ({row["intermittent_risk"]:.3f})</b> — '
+                     'low execution probability makes this path hard to verify.')
+    if row.get("cdc_risk",0) >= 0.4 and row.get("has_cdc_issue", False):
+        parts.append(f'<b>CDC risk ({row["cdc_risk"]:.3f})</b> — '
+                     'possible clock-domain crossing without synchroniser.')
+    if row.get("power_risk",0) >= 0.5:
+        tgl = toggles.get(row.get("signal",""), 0)
+        parts.append(f'<b>Power risk ({row["power_risk"]:.3f})</b> — '
+                     f'signal toggles {tgl}× per window; consider clock gating.')
+    if row.get("structural_complexity",0) >= 0.7:
+        parts.append(f'<b>Structural complexity ({row["structural_complexity"]:.3f})</b> — '
+                     'complex operator or many operands; consider pipelining.')
+    return parts or ["Low overall risk across all categories."]
+
+def render_risk_explanation(df, toggles):
+    st.markdown('<div class="sec-header">Risk Deep Dive</div>', unsafe_allow_html=True)
+    top = df.sort_values("overall_risk", ascending=False).head(10).reset_index(drop=True)
+
+    for row_idx, row in top.iterrows():
+        lvl   = row.get("risk_level","")
+        score = row.get("overall_risk",0)
+        sig   = row.get("signal","")
+        line  = row.get("line","")
+        raw   = row.get("raw_line","")
+        color = {"🔴 Critical":"#ef4444","🟠 High":"#f97316",
+                 "🟡 Medium":"#eab308","🟢 Low":"#22c55e"}.get(lvl,"#64748b")
+
+        with st.expander(f"Line {line}  ·  {sig}  ·  {raw[:70]}"):
+            left, right = st.columns([3,2])
+            with left:
+                bullets = "".join(f"<div class='fix-item'>• {p}</div>" for p in _explain(row, toggles))
+                st.markdown(f"""
+                <div class="fix-card">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                    <span style="font-size:1.2rem;font-weight:700;color:{color}">{score:.3f}</span>
+                    <span style="font-size:0.75rem;color:{color};background:{color}22;
+                                 padding:2px 10px;border-radius:999px;font-weight:600">
+                      {lvl.split(' ',1)[-1]}
+                    </span>
+                    <span style="font-size:0.72rem;color:#475569">
+                      {sig} &nbsp;·&nbsp; {row.get('operator','')}
+                    </span>
+                  </div>
+                  <div class="fix-card-code">{raw}</div>
+                  <div style="margin-top:10px;line-height:1.8">{bullets}</div>
+                </div>""", unsafe_allow_html=True)
+
+            with right:
+                scores = {"Destructive": row.get("destructive_risk",0),
+                          "Intermittent": row.get("intermittent_risk",0),
+                          "CDC":          row.get("cdc_risk",0),
+                          "Power":        row.get("power_risk",0)}
+                clrs   = {"Destructive":"#ef4444","Intermittent":"#f97316",
+                          "CDC":"#a855f7","Power":"#3b82f6"}
+                fig = go.Figure(go.Bar(
+                    x=list(scores.values()), y=list(scores.keys()),
+                    orientation="h",
+                    marker_color=[clrs[k] for k in scores],
+                    marker_line_width=0,
+                    text=[f"{v:.3f}" for v in scores.values()],
+                    textposition="outside",
+                    textfont=dict(size=10, color="#94a3b8"),
+                ))
+                fig.update_layout(
+                    paper_bgcolor=CHART_BG, plot_bgcolor=CHART_BG,
+                    margin=dict(l=4,r=50,t=4,b=4), height=140,
+                    xaxis=dict(range=[0,1.1],showgrid=False,
+                               showticklabels=False,zeroline=False),
+                    yaxis=dict(showgrid=False,tickfont=dict(size=10,color="#94a3b8")),
+                    font=dict(color=FONT_COLOR),
                 )
-            )
-            edge_trace = go.Scatter(
-                x=edge_x, y=edge_y, mode='lines',
-                line=dict(width=1.5, color='#667eea'),
-                hoverinfo='none'
-            )
-            fig_g = go.Figure(
-                data=[edge_trace, node_trace],
-                layout=go.Layout(
-                    title='Signal Dependency Graph  |  🟢 Input  🔴 Output  🔵 Internal',
-                    showlegend=False,
-                    paper_bgcolor='rgba(0,0,0,0)',
-                    plot_bgcolor='rgba(0,0,0,0)',
-                    font_color='white',
-                    xaxis=dict(showgrid=False,zeroline=False,showticklabels=False),
-                    yaxis=dict(showgrid=False,zeroline=False,showticklabels=False),
-                    margin=dict(l=20,r=20,t=60,b=20),
-                    height=500
-                )
-            )
-            st.plotly_chart(fig_g, use_container_width=True)
+                st.plotly_chart(fig, use_container_width=True,
+                                key=f"deepdive_{row_idx}")
 
-        st.markdown("### 🔗 Critical Signal Paths")
-        critical = graph.get_critical_nodes()[:10]
-        if critical:
-            st.dataframe(
-                pd.DataFrame(critical, columns=['Signal','Centrality']),
-                use_container_width=True
-            )
+            fixes = row.get("fix_suggestion","")
+            if fixes:
+                st.markdown(
+                    '<div style="font-size:0.7rem;font-weight:600;color:#475569;'
+                    'text-transform:uppercase;letter-spacing:0.6px;'
+                    'margin:8px 0 5px">Recommended Fixes</div>',
+                    unsafe_allow_html=True)
+                for f in fixes.split(" | "):
+                    if f.strip():
+                        st.markdown(f'<div class="fix-item">→ {f.strip()}</div>',
+                                    unsafe_allow_html=True)
 
-    # ── Tab 6: CDC ───────────────────────────────────────────────────────────
-    with tab6:
-        st.markdown("### ⚡ Clock Domain Crossing (CDC) Analysis")
-        cdc_df = df[df['has_cdc_issue'] == True] if 'has_cdc_issue' in df.columns else pd.DataFrame()
 
-        cc1, cc2, cc3 = st.columns(3)
-        with cc1: st.metric("🕐 Clock Domains", max(len(rtl.clock_signals),1))
-        with cc2: st.metric("⚠️ CDC Operations", len(cdc_df))
-        with cc3: st.metric("🔧 Reset Signals",  len(rtl.reset_signals))
+# ─────────────────────────────────────────────────────────────────────────────
+# render_lint_panel
+# ─────────────────────────────────────────────────────────────────────────────
+def render_lint_panel(lint_df):
+    st.markdown('<div class="sec-header">Lint Checker — 20 Rules</div>',
+                unsafe_allow_html=True)
+    if lint_df.empty:
+        st.success("✅ No lint violations found."); return
 
-        if rtl.clock_signals:
-            st.success(f"✅ Clocks detected: **{', '.join(rtl.clock_signals)}**")
+    err  = lint_df[lint_df["severity"].str.contains("Error",   na=False)]
+    warn = lint_df[lint_df["severity"].str.contains("Warning", na=False)]
+    info = lint_df[lint_df["severity"].str.contains("Info",    na=False)]
+
+    lc1, lc2, lc3 = st.columns(3)
+    for col, n, lbl, color, sub in [
+        (lc1, len(err),  "Errors",   "#ef4444","Must fix before synthesis"),
+        (lc2, len(warn), "Warnings", "#f97316","Recommended to fix"),
+        (lc3, len(info), "Info",     "#eab308","Advisory notices"),
+    ]:
+        with col:
+            st.markdown(f"""
+            <div class="mcard">
+              <div class="mcard-accent" style="background:{color}"></div>
+              <div class="mcard-label">{lbl}</div>
+              <div class="mcard-value" style="color:{color}">{n}</div>
+              <div class="mcard-sub">{sub}</div>
+            </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+
+    fc1, fc2 = st.columns(2)
+    with fc1:
+        sev_sel  = st.selectbox("Severity", ["All"]+sorted(lint_df["severity"].unique().tolist()), key="lsev")
+    with fc2:
+        rule_sel = st.selectbox("Rule ID",  ["All"]+sorted(lint_df["rule_id"].unique().tolist()),  key="lrule")
+
+    flt = lint_df.copy()
+    if sev_sel  != "All": flt = flt[flt["severity"]==sev_sel]
+    if rule_sel != "All": flt = flt[flt["rule_id"] ==rule_sel]
+    st.caption(f"{len(flt)} of {len(lint_df)} violations shown")
+
+    for _, row in flt.iterrows():
+        sev = row.get("severity","")
+        ico = "🔴" if "Error" in sev else ("🟠" if "Warning" in sev else "🟡")
+        with st.expander(f"{ico} [{row.get('rule_id','')}]  Line {row.get('line',0)}  —  {row.get('message','')}"):
+            st.code(row.get("raw_line",""), language="verilog")
+            st.markdown(f'<div style="color:#3b82f6;font-size:0.8rem;margin-top:4px">🔧 {row.get("fix","")}</div>',
+                        unsafe_allow_html=True)
+
+    svc = lint_df["severity"].value_counts().reset_index()
+    svc.columns = ["Severity","Count"]
+    fig = px.bar(svc, x="Severity", y="Count",
+                 color="Severity", text="Count",
+                 color_discrete_map={"🔴 Error":"#ef4444","🟠 Warning":"#f97316","🟡 Info":"#eab308"})
+    fig.update_traces(textposition="outside", marker_line_width=0)
+    _chart(fig, "Violations by Severity", 240)
+    fig.update_layout(showlegend=False)
+    st.plotly_chart(fig, use_container_width=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# render_cdc_panel
+# ─────────────────────────────────────────────────────────────────────────────
+def render_cdc_panel(df, rtl):
+    st.markdown('<div class="sec-header">Clock Domain Crossing (CDC)</div>',
+                unsafe_allow_html=True)
+    cdc = df[df["has_cdc_issue"]==True] if "has_cdc_issue" in df.columns else pd.DataFrame()
+
+    cc1, cc2, cc3 = st.columns(3)
+    for col, n, lbl, color, sub in [
+        (cc1, max(len(rtl.clock_signals),1), "Clock Domains","#a855f7",', '.join(rtl.clock_signals) or "none"),
+        (cc2, len(cdc),                      "CDC Ops",       "#f97316","Flagged for sync review"),
+        (cc3, len(rtl.reset_signals),        "Reset Signals", "#22c55e",', '.join(rtl.reset_signals) or "none"),
+    ]:
+        with col:
+            st.markdown(f"""
+            <div class="mcard">
+              <div class="mcard-accent" style="background:{color}"></div>
+              <div class="mcard-label">{lbl}</div>
+              <div class="mcard-value" style="color:{color}">{n}</div>
+              <div class="mcard-sub">{sub}</div>
+            </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='margin-top:16px'></div>", unsafe_allow_html=True)
+    if not cdc.empty:
+        cols = [c for c in ["line","signal","raw_line","cdc_risk","susceptibility"] if c in cdc.columns]
+        st.dataframe(cdc[cols].sort_values("cdc_risk",ascending=False)
+                              .style.format({"cdc_risk":"{:.4f}","susceptibility":"{:.4f}"}),
+                     use_container_width=True, height=220)
+        fig = px.bar(cdc.sort_values("cdc_risk",ascending=False).head(15),
+                     x="signal", y="cdc_risk", color="cdc_risk", text="cdc_risk",
+                     color_continuous_scale=["#1e1b4b","#a855f7","#ef4444"])
+        fig.update_traces(texttemplate="%{text:.3f}", textposition="outside",
+                          marker_line_width=0)
+        _chart(fig, "CDC Risk per Signal", 280)
+        fig.update_layout(coloraxis_showscale=False)
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.success("✅ No CDC-flagged operations detected.")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# render_metrics_panel
+# ─────────────────────────────────────────────────────────────────────────────
+def render_metrics_panel(df, rtl):
+    st.markdown('<div class="sec-header">Signal Metrics</div>', unsafe_allow_html=True)
+
+    mc1, mc2 = st.columns(2)
+    with mc1:
+        tdf = (pd.DataFrame([{"Type":s.signal_type} for s in rtl.signals.values()])
+               ["Type"].value_counts().reset_index())
+        tdf.columns = ["Type","Count"]
+        fig = px.pie(tdf, names="Type", values="Count", hole=0.5,
+                     color_discrete_sequence=px.colors.qualitative.Set3)
+        fig.update_traces(textinfo="percent+label",
+                          marker=dict(line=dict(color="#0d1424",width=2)))
+        _chart(fig, "Signal Types", 280)
+        fig.update_layout(showlegend=False, plot_bgcolor=CHART_BG)
+        st.plotly_chart(fig, use_container_width=True)
+    with mc2:
+        wdf = pd.DataFrame([{"Signal":n,"Width":s.width,"Type":s.signal_type}
+                             for n,s in rtl.signals.items()]).sort_values("Width",ascending=False)
+        fig2 = px.bar(wdf.head(20), x="Signal", y="Width", color="Type",
+                      color_discrete_sequence=px.colors.qualitative.Set3)
+        fig2.update_traces(marker_line_width=0)
+        _chart(fig2, "Signal Bit-Widths (Top 20)", 280)
+        st.plotly_chart(fig2, use_container_width=True)
+
+    met = ["signal","initial_weight","impact_score","susceptibility",
+           "execution_probability","structural_complexity"]
+    avail = [c for c in met if c in df.columns]
+    mdf = df[avail].drop_duplicates("signal").sort_values("impact_score",ascending=False)
+    st.dataframe(mdf.style.background_gradient(subset=avail[1:], cmap="Blues"),
+                 use_container_width=True, height=280)
+
+    heat = mdf.set_index("signal")[avail[1:]].apply(pd.to_numeric, errors="coerce")
+    fig3 = px.imshow(heat.T, color_continuous_scale="Blues",
+                     aspect="auto", text_auto=".2f")
+    fig3.update_coloraxes(showscale=False)
+    _chart(fig3, "Metrics Heatmap", 220)
+    fig3.update_layout(plot_bgcolor=CHART_BG)
+    st.plotly_chart(fig3, use_container_width=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# render_dependency_graph
+# ─────────────────────────────────────────────────────────────────────────────
+def render_dependency_graph(graph, rtl):
+    st.markdown('<div class="sec-header">Signal Dependency Graph</div>',
+                unsafe_allow_html=True)
+    G = graph.graph
+    if not G.nodes:
+        st.info("No dependency data."); return
+
+    pos = nx.spring_layout(G, seed=42, k=2.2)
+    ex, ey = [], []
+    for u, v in G.edges():
+        x0,y0 = pos[u]; x1,y1 = pos[v]
+        ex += [x0,x1,None]; ey += [y0,y1,None]
+
+    def nc(n):
+        s = rtl.signals.get(n)
+        if not s:                  return "#475569"
+        if "output" in s.signal_type: return "#ef4444"
+        if "input"  in s.signal_type: return "#22c55e"
+        return "#3b82f6"
+
+    fig = go.Figure(data=[
+        go.Scatter(x=ex, y=ey, mode="lines",
+                   line=dict(width=1, color="#1e3a5f"), hoverinfo="none"),
+        go.Scatter(
+            x=[pos[n][0] for n in G.nodes], y=[pos[n][1] for n in G.nodes],
+            mode="markers+text", text=list(G.nodes), textposition="top center",
+            textfont=dict(size=10, color="#94a3b8"),
+            marker=dict(size=18, color=[nc(n) for n in G.nodes],
+                        line=dict(width=1.5, color="#0d1424")),
+        ),
+    ], layout=go.Layout(
+        title=dict(text="🟢 Input &nbsp; 🔴 Output &nbsp; 🔵 Internal",
+                   font=dict(size=11,color="#64748b"), x=0),
+        showlegend=False,
+        paper_bgcolor=CHART_BG, plot_bgcolor="#0a0f1e",
+        font=dict(color=FONT_COLOR),
+        xaxis=dict(showgrid=False,zeroline=False,showticklabels=False),
+        yaxis=dict(showgrid=False,zeroline=False,showticklabels=False),
+        margin=dict(l=16,r=16,t=40,b=16), height=460,
+    ))
+    st.plotly_chart(fig, use_container_width=True)
+
+    crit = graph.get_critical_nodes()[:10]
+    if crit:
+        cdf = pd.DataFrame(crit, columns=["Signal","Centrality"])
+        st.dataframe(cdf.style.bar(subset=["Centrality"], color="#3b82f6"),
+                     use_container_width=True, height=220)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# render_export
+# ─────────────────────────────────────────────────────────────────────────────
+def render_export(df, lint_df, rtl, health, records, lint_violations, toggles):
+    st.markdown('<div class="sec-header">Export Reports</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.download_button("⬇️ Risk Analysis CSV", df.to_csv(index=False),
+                           "rtl_risk_report.csv","text/csv", use_container_width=True)
+    with c2:
+        if not lint_df.empty:
+            st.download_button("⬇️ Lint Violations CSV", lint_df.to_csv(index=False),
+                               "rtl_lint_report.csv","text/csv", use_container_width=True)
         else:
-            st.warning("⚠️ No explicit clock signals found.")
+            st.button("⬇️ Lint CSV (none)", disabled=True, use_container_width=True)
+    with c3:
+        try:
+            from analyzer.pdf_report import generate_pdf_report
+            pdf = generate_pdf_report(module_name=rtl.module_name, health=health,
+                                      records=records, lint_violations=lint_violations,
+                                      rtl_signals=rtl.signals, toggles=toggles)
+            st.download_button("📄 Full PDF Report", pdf,
+                               f"{rtl.module_name}_rtl_report.pdf",
+                               "application/pdf", use_container_width=True)
+        except Exception as ex:
+            st.error(f"PDF error: {ex}")
 
-        if not cdc_df.empty:
-            cdc_disp = [c for c in ['line','signal','raw_line','cdc_risk','susceptibility']
-                        if c in cdc_df.columns]
-            st.dataframe(cdc_df[cdc_disp].sort_values('cdc_risk',ascending=False),
-                         use_container_width=True)
-            fig_cdc = px.bar(cdc_df, x='signal', y='cdc_risk',
-                             color='cdc_risk', color_continuous_scale='Reds',
-                             title="CDC Risk by Signal")
-            fig_cdc.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
-            st.plotly_chart(fig_cdc, use_container_width=True)
 
-    # ── Tab 7: Fix Suggestions ───────────────────────────────────────────────
-    with tab7:
-        st.markdown("### 💡 AI-Powered Fix Suggestions")
+# ─────────────────────────────────────────────────────────────────────────────
+# render_sidebar
+# ─────────────────────────────────────────────────────────────────────────────
+def render_sidebar():
+    with st.sidebar:
+        st.markdown("""
+        <div style="padding:16px 0 10px">
+          <div style="font-size:1.05rem;font-weight:700;color:#f1f5f9">RTL Analyzer</div>
+          <div style="font-size:0.72rem;color:#475569;margin-top:2px">
+            Verilog / SystemVerilog
+          </div>
+        </div>
+        <hr style="border-color:#1e293b;margin:4px 0 18px">
+        """, unsafe_allow_html=True)
 
-        top10 = df.sort_values('overall_risk', ascending=False).head(10)
-        for _, row in top10.iterrows():
-            icon = {'🔴 Critical':'🚨','🟠 High':'⚠️','🟡 Medium':'💛','🟢 Low':'✅'}.get(row['risk_level'],'❓')
-            with st.expander(
-                f"{icon} Line {row['line']}: `{row['raw_line'][:55]}` — {row['risk_level']} ({row['overall_risk']:.3f})"
-            ):
-                fc1, fc2 = st.columns(2)
-                with fc1:
-                    st.markdown(f"**Signal:** `{row['signal']}`")
-                    st.markdown(f"**Operator:** `{row['operator']}`")
-                    st.markdown(f"**Exec Probability:** `{row['execution_probability']}`")
-                    st.markdown(f"**Toggles (power):** `{toggles.get(row['signal'],0)}`")
-                with fc2:
-                    st.markdown(f"**💥 Destructive:** `{row['destructive_risk']:.3f}`")
-                    st.markdown(f"**🎲 Intermittent:** `{row['intermittent_risk']:.3f}`")
-                    st.markdown(f"**⚡ CDC Risk:** `{row['cdc_risk']:.3f}`")
-                    st.markdown(f"**🔋 Power Risk:** `{row['power_risk']:.3f}`")
-                st.divider()
-                st.markdown("**🔧 Recommended Fixes:**")
-                for fix in row['fix_suggestion'].split(' | '):
-                    st.markdown(f"- {fix}")
-        # Export
-        st.divider()
-        st.markdown("### 📥 Export Full Report")
-        ec1, ec2, ec3 = st.columns(3)
+        st.markdown('<div style="font-size:0.72rem;font-weight:600;color:#475569;'
+                    'text-transform:uppercase;letter-spacing:0.8px;'
+                    'margin-bottom:8px">Upload File</div>', unsafe_allow_html=True)
+        uploaded = st.file_uploader("Verilog / .SV", type=["v","sv"],
+                                    label_visibility="collapsed")
 
-        with ec1:
-            csv = df.to_csv(index=False)
-            st.download_button(
-                "⬇️ Download Risk CSV", csv,
-                "rtl_risk_report.csv", "text/csv",
-                use_container_width=True
-            )
-        with ec2:
-            if not lint_df.empty:
-                lint_csv = lint_df.to_csv(index=False)
-                st.download_button(
-                    "⬇️ Download Lint CSV", lint_csv,
-                    "rtl_lint_report.csv", "text/csv",
-                    use_container_width=True
-                )
-        with ec3:
-            try:
-                from analyzer.pdf_report import generate_pdf_report
-                pdf_bytes = generate_pdf_report(
-                    module_name=rtl.module_name,
-                    health=health,
-                    records=records,
-                    lint_violations=lint_violations,
-                    rtl_signals=rtl.signals,
-                    toggles=toggles
-                )
-                st.download_button(
-                    "📄 Download PDF Report", pdf_bytes,
-                    f"{rtl.module_name}_rtl_report.pdf",
-                    "application/pdf",
-                    use_container_width=True
-                )
-            except Exception as e:
-                st.error(f"PDF error: {e}")
+        st.markdown('<div style="font-size:0.72rem;font-weight:600;color:#475569;'
+                    'text-transform:uppercase;letter-spacing:0.8px;'
+                    'margin:18px 0 8px">Demo Samples</div>', unsafe_allow_html=True)
+        use_alu  = st.button("▶ ALU sample",        use_container_width=True)
+        use_mips = st.button("▶ MIPS Pipeline",     use_container_width=True)
 
-else:
-    # Landing page
+        st.markdown('<hr style="border-color:#1e293b;margin:18px 0">', unsafe_allow_html=True)
+        st.markdown('<div style="font-size:0.72rem;font-weight:600;color:#475569;'
+                    'text-transform:uppercase;letter-spacing:0.8px;'
+                    'margin-bottom:8px">Filters</div>', unsafe_allow_html=True)
+        risk_threshold = st.slider("Risk threshold", 0.0, 1.0, 0.3, 0.05,
+                                   help="Only show operations at or above this score")
+        show_all       = st.toggle("Show all operations", value=False,
+                                   help="Override threshold and show every operation")
+        waveform_cycles = st.slider("Waveform cycles", 8, 128, 64, 8)
+
+        st.markdown('<hr style="border-color:#1e293b;margin:18px 0">', unsafe_allow_html=True)
+        st.markdown(
+            '<div style="font-size:0.68rem;color:#334155;line-height:1.7">'
+            '20 LINT rules &nbsp;·&nbsp; CDC detection<br>'
+            'Power / toggle analysis &nbsp;·&nbsp; PDF export'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+    return uploaded, use_alu, use_mips, risk_threshold, waveform_cycles, show_all
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# render_landing
+# ─────────────────────────────────────────────────────────────────────────────
+def render_landing():
     st.markdown("""
-    <div style="text-align:center;padding:60px 20px">
-      <div style="font-size:5rem">⚡</div>
-      <h2>RTL Insight Engine v2.0</h2>
-      <p style="color:#888;font-size:1.1rem;max-width:600px;margin:auto">
-        Upload a Verilog (.v) or SystemVerilog (.sv) file,<br>
-        or choose a demo from the sidebar.
-      </p>
-    </div>
-    """, unsafe_allow_html=True)
+    <div style="max-width:680px;margin:60px auto;text-align:center">
+      <div style="font-size:3.5rem;margin-bottom:12px">🔬</div>
+      <div style="font-size:1.6rem;font-weight:700;color:#f1f5f9;margin-bottom:10px">
+        RTL Health Analyzer
+      </div>
+      <div style="font-size:0.9rem;color:#475569;line-height:1.9;margin-bottom:36px">
+        Upload a Verilog <code style="background:#1e293b;padding:1px 6px;
+        border-radius:4px;color:#93c5fd">.v</code> or SystemVerilog
+        <code style="background:#1e293b;padding:1px 6px;border-radius:4px;
+        color:#93c5fd">.sv</code> file, or load a demo from the sidebar.
+      </div>
+    </div>""", unsafe_allow_html=True)
 
-    l1,l2,l3,l4,l5 = st.columns(5)
-    with l1: st.info("**⚡ Lint**\n20 rule checks")
-    with l2: st.info("**🔄 CDC**\nClock crossing")
-    with l3: st.info("**🔋 Power**\nToggle analysis")
-    with l4: st.info("**🌊 Waveform**\nSignal simulation")
-    with l5: st.info("**📊 Metrics**\n5-metric engine")
+    c1,c2,c3,c4,c5 = st.columns(5)
+    for col,(color,icon,title,desc) in zip(
+        [c1,c2,c3,c4,c5],
+        [("#ef4444","💥","Destructive","Impact & propagation"),
+         ("#f97316","🎲","Intermittent","Exec probability"),
+         ("#a855f7","⚡","CDC","Clock domains"),
+         ("#3b82f6","🔋","Power","Toggle analysis"),
+         ("#22c55e","🪲","Lint","20-rule checker")],
+    ):
+        with col:
+            st.markdown(f"""
+            <div class="mcard" style="text-align:center">
+              <div class="mcard-accent" style="background:{color}"></div>
+              <div style="font-size:1.6rem;margin:8px 0 4px">{icon}</div>
+              <div style="font-size:0.82rem;font-weight:600;color:#e2e8f0">{title}</div>
+              <div style="font-size:0.7rem;color:#475569;margin-top:3px">{desc}</div>
+            </div>""", unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+def main():
+    uploaded, use_alu, use_mips, risk_threshold, waveform_cycles, show_all = \
+        render_sidebar()
+
+    base_dir   = os.path.join(os.path.dirname(__file__), "..", "samples")
+    file_bytes = None
+    filename   = ""
+
+    if use_alu:
+        with open(os.path.join(base_dir, "alu.v"), "rb") as f:
+            file_bytes = f.read(); filename = "alu.v"
+    if use_mips:
+        with open(os.path.join(base_dir, "mips_pipeline.v"), "rb") as f:
+            file_bytes = f.read(); filename = "mips_pipeline.v"
+    if uploaded:
+        file_bytes = uploaded.getvalue(); filename = uploaded.name
+
+    if file_bytes is None:
+        render_header()
+        render_landing()
+        return
+
+    with st.spinner("Running RTL analysis pipeline…"):
+        try:
+            rtl, graph, records, health, lint_violations, waveforms, toggles = \
+                _run_analysis(file_bytes)
+        except Exception as ex:
+            render_header()
+            st.error(f"Analysis failed: {ex}"); return
+
+    render_header(rtl.module_name)
+
+    df      = pd.DataFrame(records)
+    lint_df = pd.DataFrame(lint_violations) if lint_violations else pd.DataFrame()
+    df_risk = df if show_all else df[df["overall_risk"] >= risk_threshold]
+
+    st.markdown(
+        f'<div style="background:#052e16;border:1px solid #166534;border-radius:8px;'
+        f'padding:10px 18px;color:#86efac;font-size:0.84rem;margin-bottom:20px">'
+        f'✅ &nbsp;Analysis complete &nbsp;·&nbsp; <b>{filename}</b>'
+        f'&nbsp;·&nbsp; {len(records)} operations'
+        f'&nbsp;·&nbsp; {len(rtl.signals)} signals'
+        f'&nbsp;·&nbsp; {len(lint_violations)} lint violations</div>',
+        unsafe_allow_html=True,
+    )
+
+    render_summary_cards(df, health, lint_violations, rtl)
+    st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
+
+    tabs = st.tabs([
+        "📊  Risk Rankings",
+        "📈  Visualizations",
+        "🔬  Code Viewer",
+        "💡  Risk Deep Dive",
+        "🪲  Lint",
+        "⚡  CDC",
+        "📐  Metrics",
+        "🕸️  Dependency",
+        "📥  Export",
+    ])
+    with tabs[0]: render_risk_tables(df_risk)
+    with tabs[1]: render_charts(df, toggles, waveform_cycles, waveforms)
+    with tabs[2]: render_code_viewer(file_bytes, records, filename)
+    with tabs[3]: render_risk_explanation(df, toggles)
+    with tabs[4]: render_lint_panel(lint_df)
+    with tabs[5]: render_cdc_panel(df, rtl)
+    with tabs[6]: render_metrics_panel(df, rtl)
+    with tabs[7]: render_dependency_graph(graph, rtl)
+    with tabs[8]: render_export(df, lint_df, rtl, health, records, lint_violations, toggles)
+
+
+main()
