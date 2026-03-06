@@ -154,6 +154,97 @@ def render_header(module_name=""):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# render_health_gauge
+# ─────────────────────────────────────────────────────────────────────────────
+def render_health_gauge(health, df):
+    score = health["score"]
+    grade = health["grade"].split(" ", 1)[-1]
+
+    # Weighted risk score: destructive is heaviest, then intermittent, cdc, power
+    weights = {"destructive_risk": 0.40, "intermittent_risk": 0.25,
+               "cdc_risk": 0.20, "power_risk": 0.15}
+    weighted = sum(
+        df[col].mean() * w
+        for col, w in weights.items()
+        if col in df.columns
+    )
+    computed_score = max(0, min(100, round(100 - weighted * 100)))
+    # Prefer the analyzer's own score if present, else use computed
+    display_score = score if score else computed_score
+
+    needle_color = (
+        "#22c55e" if display_score >= 80 else
+        ("#eab308" if display_score >= 60 else "#ef4444")
+    )
+    status_text = (
+        "Healthy Design" if display_score >= 80 else
+        ("Moderate Risk" if display_score >= 60 else "High Risk")
+    )
+
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=display_score,
+        number=dict(
+            font=dict(size=52, color=needle_color, family="Inter"),
+            suffix="",
+        ),
+        title=dict(
+            text=f"RTL Health Score<br><span style='font-size:0.85em;color:#64748b'>{grade} — {status_text}</span>",
+            font=dict(size=15, color="#cbd5e1", family="Inter"),
+        ),
+        gauge=dict(
+            axis=dict(
+                range=[0, 100],
+                tickwidth=1,
+                tickcolor="#334155",
+                tickvals=[0, 20, 40, 60, 80, 100],
+                ticktext=["0", "20", "40", "60", "80", "100"],
+                tickfont=dict(size=11, color="#64748b"),
+            ),
+            bar=dict(color=needle_color, thickness=0.25),
+            bgcolor="#0d1424",
+            borderwidth=0,
+            steps=[
+                dict(range=[0,  60], color="#2d0a0a"),   # red zone
+                dict(range=[60, 80], color="#2d2000"),   # yellow zone
+                dict(range=[80, 100], color="#062816"),  # green zone
+            ],
+            threshold=dict(
+                line=dict(color=needle_color, width=3),
+                thickness=0.75,
+                value=display_score,
+            ),
+        ),
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        font=dict(color="#94a3b8", family="Inter"),
+        margin=dict(l=30, r=30, t=20, b=10),
+        height=240,
+    )
+
+    # Legend labels for the three zones
+    zone_html = (
+        '<div style="display:flex;justify-content:center;gap:28px;'
+        'margin-top:-8px;margin-bottom:8px">'
+        '<span style="font-size:0.71rem;font-weight:600;color:#ef4444">'
+        '■ 0–60 High Risk</span>'
+        '<span style="font-size:0.71rem;font-weight:600;color:#eab308">'
+        '■ 60–80 Moderate</span>'
+        '<span style="font-size:0.71rem;font-weight:600;color:#22c55e">'
+        '■ 80–100 Healthy</span>'
+        '</div>'
+    )
+
+    # Center the gauge using columns
+    _, mid, _ = st.columns([1, 2, 1])
+    with mid:
+        st.plotly_chart(fig, use_container_width=True, key="health_gauge")
+        st.markdown(zone_html, unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # render_summary_cards
 # ─────────────────────────────────────────────────────────────────────────────
 def render_summary_cards(df, health, lint_violations, rtl):
@@ -865,6 +956,8 @@ def main():
         unsafe_allow_html=True,
     )
 
+    render_health_gauge(health, df)
+    st.markdown("<div style='margin-top:4px'></div>", unsafe_allow_html=True)
     render_summary_cards(df, health, lint_violations, rtl)
     st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
 
