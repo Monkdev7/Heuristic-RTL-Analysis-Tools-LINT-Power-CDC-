@@ -80,20 +80,43 @@ html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 .rtl-viewer {
     background:#0a0f1e; border:1px solid #1e293b;
     border-radius:10px; padding:12px 0;
-    max-height:500px; overflow-y:auto;
+    max-height:560px; overflow-y:auto;
     font-family:'JetBrains Mono','Fira Code','Courier New',monospace;
+    scrollbar-width:thin; scrollbar-color:#1e293b #0a0f1e;
 }
+.rtl-viewer::-webkit-scrollbar { width:6px; }
+.rtl-viewer::-webkit-scrollbar-track { background:#0a0f1e; }
+.rtl-viewer::-webkit-scrollbar-thumb { background:#1e293b; border-radius:3px; }
 .rtl-row {
-    display:flex; align-items:baseline; gap:14px;
-    padding:2px 14px; border-left:3px solid transparent;
+    display:flex; align-items:baseline; gap:0;
+    padding:1px 0; border-left:3px solid transparent;
+    transition:background 0.1s ease;
 }
-.rtl-num   { color:#334155; min-width:30px; text-align:right;
-             font-size:0.75rem; user-select:none; flex-shrink:0; }
-.rtl-code  { font-size:0.8rem; color:#94a3b8; flex:1; white-space:pre; }
-.rtl-badge { font-size:0.65rem; font-weight:600; flex-shrink:0; }
-.rtl-crit  { background:#450a0a22; border-left-color:#ef4444; }
-.rtl-high  { background:#43140722; border-left-color:#f97316; }
-.rtl-med   { background:#42200622; border-left-color:#eab308; }
+.rtl-row:hover { background:#1e293b55 !important; }
+.rtl-num {
+    color:#2d3f55; min-width:42px; text-align:right; padding:0 12px 0 10px;
+    font-size:0.72rem; user-select:none; flex-shrink:0;
+    border-right:1px solid #1a2535;
+}
+.rtl-code  { font-size:0.79rem; color:#94a3b8; flex:1; white-space:pre;
+             padding:0 10px; overflow:hidden; }
+.rtl-badge {
+    font-size:0.6rem; font-weight:700; flex-shrink:0;
+    padding:0 7px; border-radius:999px; margin-right:10px;
+    white-space:nowrap; align-self:center; line-height:1.7;
+}
+.rtl-sig  { font-size:0.6rem; color:#64748b; flex-shrink:0;
+             margin-right:8px; align-self:center; white-space:nowrap;
+             max-width:120px; overflow:hidden; text-overflow:ellipsis; }
+.rtl-crit { background:#350a0a33; border-left-color:#ef4444; }
+.rtl-high { background:#33130633; border-left-color:#f97316; }
+.rtl-med  { background:#321e0233; border-left-color:#eab308; }
+.rtl-low  { background:#0f172a55; border-left-color:#475569; }
+.rtl-kw      { color:#93c5fd; font-weight:600; }
+.rtl-comment { color:#374151; font-style:italic; }
+.rtl-string  { color:#fcd34d; }
+.rtl-pp      { color:#e879f9; }
+.rtl-numlit  { color:#86efac; }
 
 div[data-testid="stMetric"] {
     background:#0f172a; border:1px solid #1e293b; border-radius:10px; padding:14px;
@@ -456,6 +479,69 @@ def render_charts(df, toggles, waveform_cycles, waveforms):
             st.plotly_chart(fw2, use_container_width=True)
 
 
+import re as _re
+
+_VL_KW = {
+    'module','endmodule','input','output','inout','wire','reg','logic',
+    'always','always_ff','always_comb','always_latch','assign','if','else',
+    'begin','end','case','casex','casez','endcase','for','while','forever',
+    'initial','parameter','localparam','posedge','negedge','or','and','not',
+    'function','endfunction','task','endtask','generate','endgenerate',
+    'integer','real','time','signed','unsigned','tri','supply0','supply1',
+    'default','repeat','fork','join','disable','wait','buf',
+}
+
+def _hl(raw: str) -> str:
+    """Return HTML-escaped, syntax-highlighted single Verilog line."""
+    parts = []
+    s = raw
+    i = 0
+    while i < len(s):
+        # single-line comment
+        if s[i:i+2] == '//':
+            esc = s[i:].replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+            parts.append(f'<span class="rtl-comment">{esc}</span>')
+            break
+        # string literal
+        if s[i] == '"':
+            j = i + 1
+            while j < len(s) and s[j] != '"':
+                if s[j] == '\\': j += 1
+                j += 1
+            tok = s[i:j+1].replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+            parts.append(f'<span class="rtl-string">{tok}</span>')
+            i = j + 1; continue
+        # preprocessor directive
+        if s[i] == '`':
+            j = i + 1
+            while j < len(s) and (s[j].isalnum() or s[j] == '_'): j += 1
+            tok = s[i:j].replace('&','&amp;')
+            parts.append(f'<span class="rtl-pp">{tok}</span>')
+            i = j; continue
+        # number literal: 8'b1010, 4'hF, 32'd0, plain digits
+        m = _re.match(r"(\d+('[bodhBODH][0-9a-fA-FxXzZ_]+)?)", s[i:])
+        if m and m.group():
+            tok = m.group().replace('&','&amp;')
+            parts.append(f'<span class="rtl-numlit">{tok}</span>')
+            i += len(m.group()); continue
+        # identifier / keyword
+        if s[i].isalpha() or s[i] in ('_', '$'):
+            j = i
+            while j < len(s) and (s[j].isalnum() or s[j] in ('_','$')): j += 1
+            word = s[i:j]
+            esc_w = word.replace('&','&amp;')
+            if word in _VL_KW:
+                parts.append(f'<span class="rtl-kw">{esc_w}</span>')
+            else:
+                parts.append(esc_w)
+            i = j; continue
+        # everything else
+        c = s[i]
+        parts.append(c.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;'))
+        i += 1
+    return ''.join(parts)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # render_code_viewer
 # ─────────────────────────────────────────────────────────────────────────────
@@ -467,38 +553,181 @@ def render_code_viewer(file_bytes: bytes, records: list, filename=""):
         st.warning("Cannot decode source."); return
 
     lines = src.splitlines()
+
+    # Build per-line risk map: keep highest-risk record, accumulate all signals
     risk_map = {}
     for r in records:
         ln = r.get("line", 0)
-        if ln and ln not in risk_map:
-            risk_map[ln] = (r.get("risk_level",""), r.get("overall_risk",0))
-
-    html = []
-    for i, line in enumerate(lines, 1):
-        lvl, sc = risk_map.get(i, ("", 0))
-        esc = line.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-        if   "Critical" in lvl: cls,bc,badge = "rtl-row rtl-crit","#ef4444",f'<span class="rtl-badge" style="color:#ef4444">CRIT {sc:.2f}</span>'
-        elif "High"     in lvl: cls,bc,badge = "rtl-row rtl-high","#f97316",f'<span class="rtl-badge" style="color:#f97316">HIGH {sc:.2f}</span>'
-        elif "Medium"   in lvl: cls,bc,badge = "rtl-row rtl-med", "#eab308",f'<span class="rtl-badge" style="color:#eab308">MED {sc:.2f}</span>'
-        else:                   cls,bc,badge = "rtl-row","","" 
-        html.append(
-            f'<div class="{cls}">'
-            f'<span class="rtl-num">{i}</span>'
-            f'<span class="rtl-code">{esc}</span>'
-            f'{badge}</div>'
+        if not ln:
+            continue
+        sc = r.get("overall_risk", 0)
+        if ln not in risk_map or sc > risk_map[ln]["overall_risk"]:
+            risk_map[ln] = dict(
+                risk_level=r.get("risk_level", ""),
+                overall_risk=sc,
+                signal=r.get("signal", ""),
+                operator=r.get("operator", ""),
+                destructive=r.get("destructive_risk", 0),
+                intermittent=r.get("intermittent_risk", 0),
+                cdc=r.get("cdc_risk", 0),
+                power=r.get("power_risk", 0),
+                signals=[],
+            )
+        risk_map[ln]["signals"].append(
+            f"{r.get('signal','')} [{r.get('operator','')}]"
         )
 
-    legend = ('<span style="font-size:0.7rem;color:#475569">'
-              '&nbsp;■<span style="color:#ef4444"> Critical</span>'
-              '&nbsp;■<span style="color:#f97316"> High</span>'
-              '&nbsp;■<span style="color:#eab308"> Medium</span></span>')
-    fname_html = f' &nbsp;<span style="color:#3b82f6">{filename}</span>' if filename else ""
+    # ── Controls ──────────────────────────────────────────────────────────────
+    ctrl1, ctrl2, _ = st.columns([2, 2, 3])
+    with ctrl1:
+        view_mode = st.selectbox(
+            "Show lines",
+            ["All lines", "Risky only (>=0.05)", "Medium+ (>=0.3)",
+             "High+ (>=0.5)", "Critical only (>=0.75)"],
+            key="cv_mode",
+        )
+    with ctrl2:
+        show_hl = st.toggle("Syntax highlighting", value=True, key="cv_hl")
+
+    threshold_map = {
+        "All lines": 0.0,
+        "Risky only (>=0.05)": 0.05,
+        "Medium+ (>=0.3)": 0.30,
+        "High+ (>=0.5)": 0.50,
+        "Critical only (>=0.75)": 0.75,
+    }
+    vis_threshold = threshold_map[view_mode]
+
+    # ── Stats bar ─────────────────────────────────────────────────────────────
+    n_crit = sum(1 for d in risk_map.values() if d["overall_risk"] >= 0.75)
+    n_high = sum(1 for d in risk_map.values() if 0.5  <= d["overall_risk"] < 0.75)
+    n_med  = sum(1 for d in risk_map.values() if 0.3  <= d["overall_risk"] < 0.5)
+    n_low  = sum(1 for d in risk_map.values() if 0.05 <= d["overall_risk"] < 0.3)
+    fname_html = (f'<span style="color:#3b82f6">{filename}</span>'
+                  f' &nbsp;&middot;&nbsp; ') if filename else ""
     st.markdown(
-        f'<div style="font-size:0.78rem;color:#475569;margin-bottom:6px">'
-        f'Source{fname_html}&nbsp;&nbsp;{legend}</div>'
-        f'<div class="rtl-viewer">{"".join(html)}</div>',
+        f'<div style="font-size:0.75rem;color:#475569;margin:6px 0 4px;'
+        f'display:flex;gap:18px;align-items:center">'
+        f'{fname_html}'
+        f'<span>{len(lines)} lines</span>'
+        f'<span>&middot;</span>'
+        f'<span style="color:#ef4444">&#9632; {n_crit} critical</span>'
+        f'<span style="color:#f97316">&#9632; {n_high} high</span>'
+        f'<span style="color:#eab308">&#9632; {n_med} medium</span>'
+        f'<span style="color:#64748b">&#9632; {n_low} low</span>'
+        f'</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Badge config ──────────────────────────────────────────────────────────
+    # level_key -> (row_class, badge_bg, badge_fg, label)
+    BADGE_CFG = {
+        "crit": ("rtl-crit", "#450a0a", "#fca5a5", "CRIT"),
+        "high": ("rtl-high", "#431407", "#fdba74", "HIGH"),
+        "med":  ("rtl-med",  "#422006", "#fde68a", " MED"),
+        "low":  ("rtl-low",  "#1e293b", "#94a3b8", " LOW"),
+    }
+
+    def _level_key(sc):
+        if sc >= 0.75: return "crit"
+        if sc >= 0.50: return "high"
+        if sc >= 0.30: return "med"
+        if sc >= 0.05: return "low"
+        return None
+
+    # ── Build HTML rows ───────────────────────────────────────────────────────
+    html_rows = []
+    for i, line in enumerate(lines, 1):
+        info = risk_map.get(i)
+        sc   = info["overall_risk"] if info else 0.0
+        lkey = _level_key(sc)
+
+        if vis_threshold > 0 and sc < vis_threshold:
+            continue
+
+        row_cls = f"rtl-row {BADGE_CFG[lkey][0]}" if lkey else "rtl-row"
+
+        # Native browser tooltip via title= attribute
+        title_attr = ""
+        if info and sc >= 0.05:
+            sigs_str = " | ".join(dict.fromkeys(info["signals"]))[:120]
+            tip = (
+                f"Risk: {sc:.4f}  "
+                f"({info['risk_level'].split(' ',1)[-1] if info['risk_level'] else ''})\n"
+                f"Signal(s): {sigs_str}\n"
+                f"Destructive: {info['destructive']:.3f}  "
+                f"Intermittent: {info['intermittent']:.3f}  "
+                f"CDC: {info['cdc']:.3f}  "
+                f"Power: {info['power']:.3f}"
+            )
+            tip_esc = tip.replace('"', '&quot;').replace("'", '&#39;')
+            title_attr = f' title="{tip_esc}"'
+
+        code_html = _hl(line) if show_hl else (
+            line.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+        )
+
+        badge_html = sig_html = ""
+        if lkey:
+            _, bg, fg, lbl = BADGE_CFG[lkey]
+            badge_html = (
+                f'<span class="rtl-badge" style="background:{bg};color:{fg}">'
+                f'{lbl} {sc:.2f}</span>'
+            )
+            sig = (info["signal"] or "")[:18]
+            if sig:
+                sig_html = f'<span class="rtl-sig">{sig}</span>'
+
+        html_rows.append(
+            f'<div class="{row_cls}"{title_attr}>'
+            f'<span class="rtl-num">{i}</span>'
+            f'<span class="rtl-code">{code_html}</span>'
+            f'{sig_html}{badge_html}'
+            f'</div>'
+        )
+
+    if not html_rows:
+        st.info("No lines match the current filter.")
+        return
+
+    st.markdown(
+        f'<div class="rtl-viewer">{"".join(html_rows)}</div>',
+        unsafe_allow_html=True,
+    )
+
+    # ── Flagged lines jump list ───────────────────────────────────────────────
+    flagged = [
+        (ln, d) for ln, d in sorted(risk_map.items())
+        if d["overall_risk"] >= 0.3
+    ]
+    if flagged:
+        with st.expander(
+            f"Flagged lines ({len(flagged)} — Medium risk and above)",
+            expanded=False,
+        ):
+            jrows = []
+            for ln, d in flagged:
+                icon = ("🔴" if d["overall_risk"] >= 0.75
+                        else ("🟠" if d["overall_risk"] >= 0.5 else "🟡"))
+                lvl_label = (d["risk_level"].split(" ", 1)[-1]
+                             if d["risk_level"] else "")
+                jrows.append({
+                    "Line":        ln,
+                    "Level":       f"{icon} {lvl_label}",
+                    "Score":       round(d["overall_risk"], 4),
+                    "Signal":      d["signal"] or "",
+                    "Operator":    d["operator"] or "",
+                    "Destructive": round(d["destructive"], 3),
+                    "Intermittent":round(d["intermittent"], 3),
+                    "CDC":         round(d["cdc"], 3),
+                    "Power":       round(d["power"], 3),
+                })
+            jdf = pd.DataFrame(jrows)
+            st.dataframe(
+                jdf.style.map(_score_color, subset=["Score"]),
+                use_container_width=True,
+                height=min(300, 40 + len(jrows) * 36),
+            )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
