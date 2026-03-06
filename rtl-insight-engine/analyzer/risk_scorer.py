@@ -78,23 +78,23 @@ class RiskScorer:
 
     def _check_cdc(self, record: Dict) -> bool:
         """
-        Simple CDC detection: flag if a signal's sources include
-        signals from different clock domains or if it looks like
-        a cross-domain assignment without synchronizer.
+        CDC detection: flag signals that genuinely cross clock domains.
+        Uses name-based hints and clock-domain analysis from always blocks.
         """
         sig = record['signal']
-        rhs = record.get('rhs_signals', [])
-        clocks = self.rtl.clock_signals
 
-        # If multiple clocks exist and signal is driven by inputs
-        # (simple heuristic: if RHS has signals not driven by clocks)
-        if len(clocks) > 1:
+        # Explicit CDC markers in signal name
+        cdc_hints = ['fast', 'slow', 'async', 'domain', 'sync_in', 'sync_out',
+                     'cross', 'xclk', 'cdc', 'meta']
+        if any(h in sig.lower() for h in cdc_hints):
             return True
-        # Check if signal name suggests CDC
-        cdc_hints = ['fast', 'slow', 'async', 'domain', 'sync']
-        name_lower = sig.lower()
-        for hint in cdc_hints:
-            if hint in name_lower:
+
+        # Only flag when MULTIPLE distinct clocks appear in always blocks
+        clk_set = {ab['clock'] for ab in self.rtl.always_blocks if ab.get('clock')}
+        if len(clk_set) > 1:
+            # Conservative: flag only outputs that bridge between domains
+            sig_obj = self.rtl.signals.get(sig)
+            if sig_obj and 'output' in sig_obj.signal_type:
                 return True
         return False
 

@@ -85,6 +85,12 @@ class RTLParser:
             (r'\b(output)\s+(\w+)\s*[,;)]', 'output_simple'),
             (r'\b(reg)\s+\[(\d+):(\d+)\]\s+(\w+)', 'reg'),
             (r'\b(wire)\s+\[(\d+):(\d+)\]\s+(\w+)', 'wire'),
+            # SystemVerilog logic type
+            (r'\b(input)\s+logic\s+\[(\d+):(\d+)\]\s+(\w+)', 'input'),
+            (r'\b(output)\s+logic\s+\[(\d+):(\d+)\]\s+(\w+)', 'output'),
+            (r'\b(logic)\s+\[(\d+):(\d+)\]\s+(\w+)', 'wire'),
+            (r'\b(input)\s+logic\s+(\w+)\s*[,;)]', 'input_simple'),
+            (r'\b(output)\s+logic\s+(\w+)\s*[,;)]', 'output_simple'),
         ]
 
         for pattern, sig_type in patterns:

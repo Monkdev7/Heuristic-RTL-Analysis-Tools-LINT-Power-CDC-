@@ -14,6 +14,21 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from analyzer import analyze_rtl
 
+
+@st.cache_data(show_spinner=False)
+def _run_analysis(file_bytes: bytes):
+    """Cache RTL analysis by file content — avoids re-running on every slider change."""
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.v', mode='wb') as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+    try:
+        return analyze_rtl(tmp_path)
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass
+
 # ── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="RTL Insight Engine",
@@ -85,7 +100,9 @@ st.divider()
 if filepath:
     with st.spinner("🔍 Running full RTL analysis pipeline..."):
         try:
-            rtl, graph, records, health, lint_violations, waveforms, toggles = analyze_rtl(filepath)
+            with open(filepath, 'rb') as _fh:
+                _fbytes = _fh.read()
+            rtl, graph, records, health, lint_violations, waveforms, toggles = _run_analysis(_fbytes)
         except Exception as e:
             st.error(f"Analysis error: {e}")
             st.stop()
@@ -138,6 +155,21 @@ if filepath:
     with tab1:
         st.markdown("### 🎯 Risk Violations Table")
 
+        sf1, sf2 = st.columns([3, 1])
+        with sf1:
+            sig_search = st.text_input("🔍 Filter by signal name", "", key="sig_search")
+        with sf2:
+            op_opts = ["All"] + sorted(df_risk['operator'].unique().tolist())
+            op_sel  = st.selectbox("Operator", op_opts, key="op_sel")
+
+        filtered_risk = df_risk.copy()
+        if sig_search:
+            filtered_risk = filtered_risk[
+                filtered_risk['signal'].str.contains(sig_search, case=False, na=False)
+            ]
+        if op_sel != "All":
+            filtered_risk = filtered_risk[filtered_risk['operator'] == op_sel]
+
         def highlight_risk(val):
             return {
                 '🔴 Critical':'background-color:#ef444420;color:#ef4444;font-weight:bold',
@@ -148,10 +180,10 @@ if filepath:
 
         disp = ['line','raw_line','signal','operator','overall_risk',
                 'destructive_risk','intermittent_risk','cdc_risk','power_risk','risk_level']
-        avail = [c for c in disp if c in df_risk.columns]
-        top_df = df_risk[avail].sort_values('overall_risk', ascending=False).head(15)
+        avail = [c for c in disp if c in filtered_risk.columns]
+        top_df = filtered_risk[avail].sort_values('overall_risk', ascending=False).head(50)
         st.dataframe(
-            top_df.style.applymap(highlight_risk, subset=['risk_level']),
+            top_df.style.map(highlight_risk, subset=['risk_level']),
             use_container_width=True, height=380
         )
 
@@ -208,7 +240,7 @@ if filepath:
 
     # ── Tab 2: Lint Checker ──────────────────────────────────────────────────
     with tab2:
-        st.markdown("### 🪲 RTL Lint Rule Checker — 15 Rules")
+        st.markdown("### 🪲 RTL Lint Rule Checker — 20 Rules")
 
         if lint_df.empty:
             st.success("✅ No lint violations found!")
@@ -224,7 +256,22 @@ if filepath:
             with lc3: st.metric("🟡 Info",     len(infos))
 
             st.markdown("#### Violations")
-            for _, row in lint_df.iterrows():
+            lf1, lf2 = st.columns(2)
+            with lf1:
+                sev_opts = ['All'] + sorted(lint_df['severity'].unique().tolist())
+                sev_sel  = st.selectbox("Filter by severity", sev_opts, key="lint_sev")
+            with lf2:
+                rule_opts = ['All'] + sorted(lint_df['rule_id'].unique().tolist())
+                rule_sel  = st.selectbox("Filter by rule ID", rule_opts, key="lint_rule")
+
+            filt_lint = lint_df.copy()
+            if sev_sel != 'All':
+                filt_lint = filt_lint[filt_lint['severity'] == sev_sel]
+            if rule_sel != 'All':
+                filt_lint = filt_lint[filt_lint['rule_id'] == rule_sel]
+            st.caption(f"{len(filt_lint)} of {len(lint_df)} violations shown")
+
+            for _, row in filt_lint.iterrows():
                 sev = row.get('severity','')
                 icon = '🔴' if 'Error' in sev else ('🟠' if 'Warning' in sev else '🟡')
                 with st.expander(
@@ -249,7 +296,30 @@ if filepath:
 
     # ── Tab 3: Metrics ───────────────────────────────────────────────────────
     with tab3:
-        st.markdown("### 📊 Signal Metrics Table")
+        st.markdown("### � Signal Inventory")
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            type_counts = pd.DataFrame(
+                [{'Type': s.signal_type} for s in rtl.signals.values()]
+            )['Type'].value_counts().reset_index()
+            type_counts.columns = ['Type', 'Count']
+            fig_types = px.pie(type_counts, names='Type', values='Count',
+                               title="Signal Type Distribution",
+                               color_discrete_sequence=px.colors.qualitative.Set3)
+            fig_types.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
+            st.plotly_chart(fig_types, use_container_width=True)
+        with tc2:
+            width_df = pd.DataFrame(
+                [{'Signal': n, 'Width': s.width, 'Type': s.signal_type}
+                 for n, s in rtl.signals.items()]
+            ).sort_values('Width', ascending=False)
+            fig_widths = px.bar(width_df.head(20), x='Signal', y='Width',
+                                color='Type', title="Signal Bit-Widths (Top 20)",
+                                color_discrete_sequence=px.colors.qualitative.Set3)
+            fig_widths.update_layout(paper_bgcolor='rgba(0,0,0,0)', font_color='white')
+            st.plotly_chart(fig_widths, use_container_width=True)
+
+        st.markdown("### �📊 Signal Metrics Table")
         mcols = ['signal','initial_weight','impact_score','susceptibility',
                  'execution_probability','structural_complexity']
         avail_m = [c for c in mcols if c in df.columns]
@@ -411,8 +481,7 @@ if filepath:
     # ── Tab 6: CDC ───────────────────────────────────────────────────────────
     with tab6:
         st.markdown("### ⚡ Clock Domain Crossing (CDC) Analysis")
-        cdc_df = df[df.get('has_cdc_issue', pd.Series(False, index=df.index)) == True] \
-                 if 'has_cdc_issue' in df.columns else pd.DataFrame()
+        cdc_df = df[df['has_cdc_issue'] == True] if 'has_cdc_issue' in df.columns else pd.DataFrame()
 
         cc1, cc2, cc3 = st.columns(3)
         with cc1: st.metric("🕐 Clock Domains", max(len(rtl.clock_signals),1))
@@ -514,7 +583,7 @@ else:
     """, unsafe_allow_html=True)
 
     l1,l2,l3,l4,l5 = st.columns(5)
-    with l1: st.info("**⚡ Lint**\n15 rule checks")
+    with l1: st.info("**⚡ Lint**\n20 rule checks")
     with l2: st.info("**🔄 CDC**\nClock crossing")
     with l3: st.info("**🔋 Power**\nToggle analysis")
     with l4: st.info("**🌊 Waveform**\nSignal simulation")

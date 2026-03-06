@@ -31,6 +31,11 @@ class LintChecker:
         self._check_multi_driven()
         self._check_latch_inference()
         self._check_truncation()
+        self._check_initial_block()
+        self._check_forever_loop()
+        self._check_system_tasks()
+        self._check_delays()
+        self._check_timescale()
         return self.violations
 
     def _add(self, rule_id, severity, line_no, line, message, fix):
@@ -126,9 +131,10 @@ class LintChecker:
     def _check_magic_numbers(self):
         """LINT006: Hardcoded numeric literals (magic numbers)."""
         for i, line in enumerate(self.lines, 1):
-            if re.search(r"(?<!')\b([2-9]\d{2,})\b", line) and '//' not in line[:line.find(str(re.search(r"(?<!')\b([2-9]\d{2,})\b", line).group()))]:
+            m = re.search(r"(?<!')\b([2-9]\d{2,})\b", line)
+            if m and '//' not in line[:m.start()]:
                 self._add('LINT006', '🟡 Info', i, line,
-                          "Magic number detected — use named parameter/localparam",
+                          f"Magic number '{m.group(1)}' detected — use named parameter/localparam",
                           "Add: localparam MY_CONST = <value>; and use that name")
 
     def _check_wide_mux(self):
@@ -231,3 +237,45 @@ class LintChecker:
                     self._add('LINT015', '🟠 Warning', op.line_number, op.raw_line,
                               f"Width truncation: '{op.lhs}'({sig.width}b) = {op.operator} of {max_rhs_width}b signals",
                               f"Widen '{op.lhs}' to {max_rhs_width+1} bits to avoid overflow truncation")
+
+    def _check_initial_block(self):
+        """LINT016: initial block — not synthesizable in most tools."""
+        for i, line in enumerate(self.lines, 1):
+            if re.match(r'\s*initial\b', line):
+                self._add('LINT016', '🟠 Warning', i, line,
+                          "initial block detected — not synthesizable in most tools",
+                          "Replace with reset logic in always @(posedge clk) block")
+
+    def _check_forever_loop(self):
+        """LINT017: forever loop — simulation only, not synthesizable."""
+        for i, line in enumerate(self.lines, 1):
+            if re.search(r'\bforever\b', line) and '//' not in line.split('forever')[0]:
+                self._add('LINT017', '🔴 Error', i, line,
+                          "forever loop detected — simulation only, not synthesizable",
+                          "Replace with synchronous always @(posedge clk) block")
+
+    def _check_system_tasks(self):
+        """LINT018: $display/$monitor system tasks — remove before synthesis."""
+        sim_tasks = re.compile(r'\$(display|monitor|strobe|dumpvars|dumpfile|finish|stop)\b')
+        for i, line in enumerate(self.lines, 1):
+            m = sim_tasks.search(line)
+            if m and '//' not in line[:m.start()]:
+                self._add('LINT018', '🟡 Info', i, line,
+                          f"Simulation task ${m.group(1)} found — remove before synthesis",
+                          f"Remove ${m.group(1)} or wrap in `ifdef SIMULATION guard")
+
+    def _check_delays(self):
+        """LINT019: Timing delay #N — ignored by synthesis tools."""
+        for i, line in enumerate(self.lines, 1):
+            code = line[:line.index('//')] if '//' in line else line
+            if re.search(r'#\s*\d+', code):
+                self._add('LINT019', '🟠 Warning', i, line,
+                          "Timing delay #N found — ignored by synthesis tools",
+                          "Remove delay annotations; use synchronous design patterns")
+
+    def _check_timescale(self):
+        """LINT020: Missing `timescale directive."""
+        if self.lines and not any('`timescale' in ln for ln in self.lines):
+            self._add('LINT020', '🟡 Info', 1, self.lines[0],
+                      "No `timescale directive found in file",
+                      "Add: `timescale 1ns/1ps at the top of the file")

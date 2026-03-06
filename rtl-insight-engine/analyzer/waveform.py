@@ -8,7 +8,7 @@ from typing import Dict, List
 
 class WaveformSimulator:
 
-    def __init__(self, records: List[Dict], cycles: int = 32):
+    def __init__(self, records: List[Dict], cycles: int = 64):
         self.records = records
         self.cycles = cycles
 
